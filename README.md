@@ -22,9 +22,6 @@ Kong Gateway を使った FAPI 2.0の検証
   - [JARM](#jarmjwt-secured-authorization-response-mode)
   - [DPoP](#dpopdemonstrating-proof-of-possession)
 - [API Gateway の FAPI 2.0 対応状況比較](#api-gateway-の-fapi-20-対応状況比較)
-- [付録 - Kong Gateway と Keycloak の設定解説](#付録---kong-gateway-と-keycloak-の設定解説)
-  - [Kong Gateway（deck.yaml）](#kong-gatewaydeckyaml)
-  - [Keycloak（fapi2-realm.json）](#keycloakfapi2-realmjson)
 - [Kong Gateway での実装例](#kong-gateway-での実装例)
   - [FAPI 2.0 における Kong Gateway の役割](#fapi-20-における-kong-gateway-の役割)
   - [openid-connect プラグインの FAPI 対応機能](#openid-connect-プラグインの-fapi-対応機能)
@@ -35,6 +32,9 @@ Kong Gateway を使った FAPI 2.0の検証
     - [自動検証スクリプト](#自動検証スクリプト)
     - [正常系：FAPI 2.0 フローの実行（手動）](#正常系fapi-20-フローの実行手動)
     - [異常系：拒否されることを確認する](#異常系拒否されることを確認する)
+- [付録 - Kong Gateway と Keycloak の設定解説](#付録---kong-gateway-と-keycloak-の設定解説)
+  - [Kong Gateway（deck.yaml）](#kong-gatewaydeckyaml)
+  - [Keycloak（fapi2-realm.json）](#keycloakfapi2-realmjson)
 
 ---
 
