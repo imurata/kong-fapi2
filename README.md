@@ -1135,6 +1135,10 @@ using_pseudo_issuer: true
 
 `using_pseudo_issuer: true` は Kong に「この issuer から Discovery を行わない」と指示するフラグだ。通常 Kong は issuer URL から `/.well-known/openid-configuration` を取得して各エンドポイントを自動解決するが、このフラグを立てると discovery を行わない。そのため `introspection_endpoint` を明示設定している。`issuer` の値はトークンの `iss` クレームとの対応付けに使われる。
 
+このフラグが必要な理由は、本環境の Docker ネットワーク構成にある。Keycloak は `KC_HOSTNAME: http://keycloak.localhost:9080` で起動しているため、発行するすべてのトークンの `iss` クレームは `http://keycloak.localhost:9080/realms/fapi2` になる。一方、ポート 9080 は Docker ホスト側のポートマッピングであり、Kong コンテナの内部からは到達できない。Kong が Keycloak に実際に通信できるのは `http://keycloak:8080`（Docker 内部ネットワーク）経由だ。
+
+`using_pseudo_issuer` なしで Discovery を使おうとすると、Kong は到達可能な内部 URL（`keycloak:8080`）に Discovery を試みるが、Discovery ドキュメントの `issuer` フィールドは公開 URL（`keycloak.localhost:9080`）を返す。Kong はこの不一致を検出してエラーにする。`using_pseudo_issuer: true` で Discovery を無効にし、`introspection_endpoint` を内部 URL で明示することでこの問題を回避している。
+
 ```yaml
 introspection_endpoint: ${{ env "DECK_INTROSPECTION_ENDPOINT" }}
 client_id:
