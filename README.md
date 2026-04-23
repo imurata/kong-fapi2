@@ -1,6 +1,39 @@
 Kong Gateway を使った FAPI 2.0の検証
 
+## 目次
 
+- [FAPI とは](#fapiとは)
+  - [概要](#概要)
+  - [FAPI 2.0 の特徴](#fapi-20-の特徴)
+    - [Security Profile](#fapi-20-security-profile)
+    - [Message Signing](#fapi-20-message-signing)
+    - [両プロファイルを組み合わせたフロー](#fapi-20-security-profileと-message-signing-を組み合わせた場合の処理)
+    - [実装チェックリスト](#実装チェックリスト)
+  - [FAPI 2.0 の対応状況](#fapi-20-の対応状況)
+- [FAPI の沿革](#fapi-の沿革)
+  - [FAPI 1.0 リリースまで](#fapi-10-リリースまで)
+  - [FAPI 2.0 リリースまで](#fapi-20-リリースまで)
+  - [FAPI 1.0 と 2.0 の相違点](#fapi-10と20の相違点)
+- [付録 - 用語解説](#付録---用語解説)
+  - [署名アルゴリズム（RS256/ES256/PS256 等）](#rs256es256ps256s256rsa-pss楕円曲線署名)
+  - [PKCE](#pkceproof-key-for-code-exchange)
+  - [PAR](#parpushed-authorization-requests)
+  - [JAR](#jarjwt-secured-authorization-requests)
+  - [JARM](#jarmjwt-secured-authorization-response-mode)
+  - [DPoP](#dpopdemonstrating-proof-of-possession)
+- [API Gateway の FAPI 2.0 対応状況比較](#api-gateway-の-fapi-20-対応状況比較)
+- [Kong Gateway での実装例](#kong-gateway-での実装例)
+  - [FAPI 2.0 における Kong Gateway の役割](#fapi-20-における-kong-gateway-の役割)
+  - [openid-connect プラグインの FAPI 対応機能](#openid-connect-プラグインの-fapi-対応機能)
+  - [「FAPI 2.0 対応」と言えるか](#fapi-20-対応と言えるか)
+  - [検証](#検証)
+    - [構成](#構成)
+    - [環境起動](#環境起動)
+    - [自動検証スクリプト](#自動検証スクリプト)
+    - [正常系：FAPI 2.0 フローの実行（手動）](#正常系fapi-20-フローの実行手動)
+    - [異常系：拒否されることを確認する](#異常系拒否されることを確認する)
+
+---
 
 ## FAPIとは
 ### 概要
