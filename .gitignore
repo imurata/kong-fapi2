@@ -1,0 +1,13 @@
+.env
+*.bak
+
+# TLS / DPoP keys — never commit private keys
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python
+__pycache__/
+*.pyc
+*.pyo

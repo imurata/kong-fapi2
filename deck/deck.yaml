@@ -1,0 +1,49 @@
+_format_version: "3.0"
+
+services:
+  - name: httpbin
+    url: http://httpbin/anything
+    plugins:
+      - name: openid-connect
+        config:
+          issuer: ${{ env "DECK_ISSUER" }}
+          using_pseudo_issuer: true
+          introspection_endpoint: ${{ env "DECK_INTROSPECTION_ENDPOINT" }}
+          client_id:
+            - ${{ env "DECK_CLIENT_ID" }}
+          client_secret:
+            - ${{ env "DECK_CLIENT_SECRET" }}
+          client_auth:
+            - client_secret_post
+          introspection_endpoint_auth_method: client_secret_post
+          auth_methods:
+            - introspection
+          bearer_token_param_type:
+            - header
+          consumer_claim:
+            - preferred_username
+          consumer_by:
+            - username
+          proof_of_possession_dpop: strict
+          display_errors: true
+    routes:
+      - name: fapi2-route
+        paths:
+          - /anything
+        protocols:
+          - http
+          - https
+
+consumer_groups:
+  - name: fapi2-users
+
+consumers:
+  - username: alice
+    groups:
+      - name: fapi2-users
+
+  - username: bob
+    groups:
+      - name: fapi2-users
+
+  - username: charlie

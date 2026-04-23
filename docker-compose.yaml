@@ -1,0 +1,125 @@
+networks:
+  fapi2-net:
+    name: fapi2-net
+
+services:
+  kong-db:
+    image: postgres:15
+    container_name: fapi2-kong-db
+    restart: unless-stopped
+    networks:
+      - fapi2-net
+    environment:
+      POSTGRES_DB: kong
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: kong
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kong -d kong"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  keycloak-db:
+    image: postgres:15
+    container_name: fapi2-keycloak-db
+    restart: unless-stopped
+    networks:
+      - fapi2-net
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.1.5}
+    container_name: fapi2-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    networks:
+      fapi2-net:
+        aliases:
+          - keycloak.localhost
+    ports:
+      - "9080:8080"
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: keycloak-db
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      # Fix the public issuer so tokens always carry keycloak.localhost:9080 as iss,
+      # while Kong can still reach the JWKS/introspection endpoint over the internal network.
+      KC_HOSTNAME: http://keycloak.localhost:9080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_FEATURES: dpop
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./keycloak/realm-import:/opt/keycloak/data/import
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+
+  kong-migrations:
+    image: kong/kong-gateway:${KONG_VERSION:-3.10.0.7}
+    container_name: fapi2-kong-migrations
+    networks:
+      - fapi2-net
+    command: kong migrations bootstrap
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-db
+      KONG_PG_DATABASE: kong
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kong
+      KONG_LICENSE_DATA: ${KONG_LICENSE_DATA}
+    depends_on:
+      kong-db:
+        condition: service_healthy
+
+  httpbin:
+    image: kong/httpbin:latest
+    container_name: fapi2-httpbin
+    restart: unless-stopped
+    networks:
+      - fapi2-net
+
+  kong:
+    image: kong/kong-gateway:${KONG_VERSION:-3.10.0.7}
+    container_name: fapi2-kong
+    restart: unless-stopped
+    networks:
+      - fapi2-net
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8443:8443"
+      - "8444:8444"
+    depends_on:
+      kong-db:
+        condition: service_healthy
+      kong-migrations:
+        condition: service_completed_successfully
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-db
+      KONG_PG_DATABASE: kong
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kong
+      KONG_LICENSE_DATA: ${KONG_LICENSE_DATA}
+      KONG_PROXY_LISTEN: 0.0.0.0:8000, 0.0.0.0:8443 ssl
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001, 0.0.0.0:8444 ssl
+      KONG_ADMIN_GUI_LISTEN: 0.0.0.0:8002, 0.0.0.0:8445 ssl
+      KONG_STATUS_LISTEN: 0.0.0.0:8100
+      KONG_LOG_LEVEL: info
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
