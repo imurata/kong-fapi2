@@ -22,6 +22,9 @@ Kong Gateway を使った FAPI 2.0の検証
   - [JARM](#jarmjwt-secured-authorization-response-mode)
   - [DPoP](#dpopdemonstrating-proof-of-possession)
 - [API Gateway の FAPI 2.0 対応状況比較](#api-gateway-の-fapi-20-対応状況比較)
+- [付録 - Kong Gateway と Keycloak の設定解説](#付録---kong-gateway-と-keycloak-の設定解説)
+  - [Kong Gateway（deck.yaml）](#kong-gatewaydeckyaml)
+  - [Keycloak（fapi2-realm.json）](#keycloakfapi2-realmjson)
 - [Kong Gateway での実装例](#kong-gateway-での実装例)
   - [FAPI 2.0 における Kong Gateway の役割](#fapi-20-における-kong-gateway-の役割)
   - [openid-connect プラグインの FAPI 対応機能](#openid-connect-プラグインの-fapi-対応機能)
@@ -1099,7 +1102,7 @@ code_challenge=$CODE_CHALLENGE&code_challenge_method=S256"
 
 ##### 12. グループ未所属の charlie のトークンで Kong にアクセスする
 
-charlie は `fapi2-users` グループに属していないため、Kong の Consumer マッピングが成立せず 401 が返る。手順 6〜8 を charlie のクレデンシャル（パスワード: `charlie-pass`）で繰り返し、取得したトークンで Kong を呼び出す。
+charlie は `fapi2-users` Consumer Group に属していないが、現在の deck.yaml には ACL プラグインが設定されていないため、グループ未所属を理由に自動的に 401 になるわけではない。グループベースのアクセス制御を実際に動作させるには ACL プラグインの追加が必要だ。手順 6〜8 を charlie のクレデンシャル（パスワード: `charlie-pass`）で繰り返すことで、Keycloak の認証は通るが Kong 側に Consumer Group による制限がないことを確認できる。
 
 ```bash
 curl -i http://localhost:8000/anything \
@@ -1107,4 +1110,180 @@ curl -i http://localhost:8000/anything \
   -H "DPoP: $CHARLIE_DPOP_PROOF"
 # → HTTP/1.1 401 Unauthorized
 ```
+
+---
+
+## 付録 - Kong Gateway と Keycloak の設定解説
+
+ここでは `deck/deck.yaml`（Kong）と `keycloak/realm-import/fapi2-realm.json`（Keycloak）の各設定値が何を意味し、FAPI 2.0 のどの要件に対応するかを整理する。
+
+### Kong Gateway（deck.yaml）
+
+#### openid-connect プラグイン
+
+```yaml
+auth_methods:
+  - introspection
+```
+
+Kong がトークンを検証する方式として introspection を選択している。Kong はアクセストークンを受け取るたびに Keycloak の introspection エンドポイントへ問い合わせ、トークンの有効性・クレームを確認する。JWT 署名検証（`bearer_jwt_auth`）を使う方法もあるが、introspection はトークンのリアルタイム失効が反映される利点がある。
+
+```yaml
+issuer: ${{ env "DECK_ISSUER" }}
+using_pseudo_issuer: true
+```
+
+`using_pseudo_issuer: true` は Kong に「この issuer から Discovery を行わない」と指示するフラグだ。通常 Kong は issuer URL から `/.well-known/openid-configuration` を取得して各エンドポイントを自動解決するが、このフラグを立てると discovery を行わない。そのため `introspection_endpoint` を明示設定している。`issuer` の値はトークンの `iss` クレームとの対応付けに使われる。
+
+```yaml
+introspection_endpoint: ${{ env "DECK_INTROSPECTION_ENDPOINT" }}
+client_id:
+  - ${{ env "DECK_CLIENT_ID" }}
+client_secret:
+  - ${{ env "DECK_CLIENT_SECRET" }}
+client_auth:
+  - client_secret_post
+introspection_endpoint_auth_method: client_secret_post
+```
+
+introspection エンドポイントへのリクエストには Kong 自身のクライアント認証が必要だ。`client_auth: client_secret_post` は POST ボディにクライアントIDとシークレットを含めて送る方式で、本環境では Keycloak の `kong` クライアントに対して認証している。FAPI 2.0 Security Profile が要求するクライアント認証（`private_key_jwt` または mTLS）はエンドユーザー向けクライアント（`fapi2-test-client`）の要件であり、Kong 自身の introspection 用認証には直接適用されない。
+
+```yaml
+bearer_token_param_type:
+  - header
+```
+
+アクセストークンを Authorization ヘッダーからのみ受け付ける設定だ。クエリパラメータや POST ボディでのトークン送信を拒否する。FAPI 2.0 は RFC 6750 §5.3 の要求に従い、トークンの URL 露出を禁止しているため、ヘッダー限定にしている。
+
+```yaml
+proof_of_possession_dpop: strict
+```
+
+DPoP 検証を厳格モードで有効にする設定だ。`strict` を指定すると、`Authorization: DPoP <token>` 形式のリクエストには必ず `DPoP:` ヘッダーが要求される。Kong は以下を検証する：
+
+1. DPoP Proof JWT の署名を Proof ヘッダー内の公開鍵（`jwk`）で検証する
+2. その公開鍵の JWK Thumbprint を計算し、アクセストークンの `cnf.jkt` と一致するか確認する
+3. Proof の `ath` がアクセストークンの SHA-256 ハッシュと一致するか確認する
+4. `htm`・`htu` が実際のリクエストのメソッド・URL と一致するか確認する
+
+これが FAPI 2.0 Security Profile の sender-constrained token 要件を Kong が満たすための中心的な設定だ。
+
+```yaml
+consumer_claim:
+  - preferred_username
+consumer_by:
+  - username
+```
+
+introspection レスポンスの `preferred_username` クレームを使って Kong の Consumer を特定する設定だ。アクセストークンのユーザー名（`alice`・`bob` 等）と Kong の Consumer レコードを紐付ける。Consumer の特定はできるが、グループ未所属を理由に自動的に拒否されるわけではない。Consumer Group によるアクセス制御を強制するには ACL プラグインなどの追加設定が別途必要だ。
+
+#### Consumer とグループ
+
+```yaml
+consumers:
+  - username: alice
+    groups:
+      - name: fapi2-users
+  - username: bob
+    groups:
+      - name: fapi2-users
+  - username: charlie   # グループなし
+```
+
+alice・bob は `fapi2-users` Consumer Group に属しており、charlie はグループ未所属だ。ただし Consumer Group の定義だけではアクセスは制御されない。グループ所属を理由に拒否するには ACL プラグイン等を追加する必要がある。この deck.yaml にはその設定が含まれていないため、現状の構成では charlie が 401 になるとは限らない。将来的にグループベースの認可を追加する場合の土台として Consumer Group を定義している。
+
+---
+
+### Keycloak（fapi2-realm.json）
+
+#### Realm レベルの設定
+
+```json
+"accessTokenLifespan": 300
+```
+
+アクセストークンの有効期限を 300 秒（5分）に設定している。FAPI 2.0 Security Profile は短命なトークンを推奨しており（SHOULD）、長期有効なトークンが盗まれたときのリスクを下げる。
+
+```json
+"attributes": {
+  "parRequestUriLifespan": "600"
+}
+```
+
+PAR で発行された `request_uri` の有効期限を 600 秒（10分）に設定している。手動検証でブラウザ操作に時間がかかることを考慮して長めにしているが、FAPI 2.0 Security Profile Final は `expires_in` を 600 秒未満で発行するよう AS に求めており、この値はその上限に当たる。本番環境では短くすることが望ましい。
+
+#### fapi2-test-client の設定
+
+このクライアントは PAR・PKCE・DPoP の挙動を確認するためのテストクライアントとして設定されている。`private_key_jwt` 認証・JAR・JARM は設定しておらず、FAPI 2.0 Final の完全準拠構成ではない。
+
+```json
+"require.pushed.authorization.requests": "true"
+```
+
+このクライアントへの認可リクエストはすべて PAR 経由でなければならないと Keycloak に強制させる設定だ。`request_uri` を使わない通常の `/authorize` リクエストは Keycloak が拒否する。FAPI 2.0 Security Profile §5.2.2 の必須要件に対応する。
+
+```json
+"pkce.code.challenge.method": "S256"
+```
+
+PKCE の `code_challenge_method` を `S256` に固定する。`plain` を使ったリクエストは拒否される。FAPI 2.0 は S256 のみを許可している（RFC 7636 の `plain` は禁止）。
+
+```json
+"dpop.bound.access.tokens": "true"
+```
+
+このクライアントが取得するアクセストークンを必ず DPoP バインドにする設定だ。トークンリクエストに `DPoP:` ヘッダーがなければ Keycloak はエラーを返す。発行されたトークンには `cnf.jkt`（公開鍵の JWK Thumbprint）が埋め込まれ、sender-constrained token になる。
+
+```json
+"access.token.signed.response.alg": "PS256",
+"id.token.signed.response.alg": "PS256"
+```
+
+アクセストークンおよび ID Token の署名アルゴリズムを PS256 に固定する。FAPI 2.0 Security Profile は JWT の署名に PS256・ES256・EdDSA のみを許可しており、RS256 は禁止されている。
+
+```json
+"publicClient": false
+```
+
+confidential client として設定する。Public client（モバイルアプリ等）はクライアントシークレットを安全に保管できないため、FAPI 2.0 は confidential client または public client ＋ PKCE を要求する。本環境は confidential client として `client_secret_post` 認証を使っているが、FAPI 2.0 本来の要件は `private_key_jwt` または mTLS を要求する。
+
+```json
+"directAccessGrantsEnabled": false
+```
+
+Resource Owner Password Credentials グラント（`grant_type=password`）を無効にする。FAPI 2.0 はこのグラントタイプを明示的に禁止している。ユーザーの資格情報をクライアントが直接受け取るフローは FAPI 2.0 が前提とする脅威モデル（クライアントを信頼しない）に反する。
+
+#### kong クライアントの設定
+
+このクライアントは Kong Gateway が introspection を行うためだけに使う。
+
+```json
+"standardFlowEnabled": false,
+"implicitFlowEnabled": false,
+"directAccessGrantsEnabled": false
+```
+
+認可コードフロー・Implicit フロー・Resource Owner Password Credentials をすべて無効にしている。Kong は introspection のみを行うクライアントであり、エンドユーザー向けのフローは一切不要なため、攻撃対象面を最小化する。
+
+```json
+"serviceAccountsEnabled": true
+```
+
+Client Credentials グラントを有効にする。introspection エンドポイントへのアクセスに必要なサービスアカウントを Keycloak 内に作成するためのフラグだ。
+
+#### Protocol Mapper（groups クレーム）
+
+```json
+{
+  "name": "groups",
+  "protocolMapper": "oidc-group-membership-mapper",
+  "config": {
+    "access.token.claim": "true",
+    "introspection.token.claim": "true",
+    "claim.name": "groups"
+  }
+}
+```
+
+ユーザーが所属する Keycloak グループ名をアクセストークンと introspection レスポンスの `groups` クレームとして出力するマッパーだ。`introspection.token.claim: true` が重要で、これがないと Kong が introspection で受け取るレスポンスに `groups` が含まれず、Consumer Group による認可制御が機能しない。
 
