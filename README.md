@@ -215,7 +215,7 @@ FAPI 2.0 Security Profile の最終仕様が 2025年2月に承認されたこと
 | IdP | Security Profile | Message Signing | PAR | JAR | JARM | DPoP | OpenID 認定 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Keycloak** | ✅（v26.4で公式サポート表明） | ✅（v26.4で公式サポート表明） | ✅ | ✅ | ✅ | ✅（v26.1+） | 適合性テスト通過（公式認定一覧への掲載は別途確認） |
-| **Auth0** | ⚠️ 設定可能 | ⚠️ 設定可能 | ✅ | 不明 | 不明 | 不明 | 未取得 |
+| **Auth0** | ✅（Enterprise + HRI 必須） | ❌（JARM 未確認） | ✅ | ✅ | 未確認 | 未確認 | 未取得 |
 | **Okta** | ⚠️ 根拠不足 | 要確認 | ✅ | 要確認 | 要確認 | ✅ | 未取得 |
 | **Microsoft Entra ID** | ❌ | ❌ | ❌ | ❌ | ❌ | 未確認（RFC 9449 準拠の対応を確認できず） | 未取得 |
 | **Kong Identity** | 不明 | 不明 | 不明 | 不明 | 不明 | 不明 | 未確認 |
@@ -226,7 +226,7 @@ FAPI 2.0 Security Profile の最終仕様が 2025年2月に承認されたこと
 FAPI 2.0 への対応が最も進んでいる OSS IdP である。FAPI 2.0 用のクライアントプロファイル（`fapi-2-security-profile` / `fapi-2-dpop-security-profile` / `fapi-2-message-signing`）が組み込まれている。DPoP は v26.1 で導入。Security Profile・Message Signing Final への公式サポート表明は v26.4 のリリースノートによる（v26.1 時点では DPoP 追加のみで、Final 仕様全体のサポート表明ではない）。適合性テストは通過しているが、OpenID Foundation の公式認定一覧（<https://openid.net/certification/>）への掲載状況は別途確認が必要である。
 
 **Auth0**（Okta Customer Identity Cloud）
-表の「⚠️ 設定可能」は、Auth0 が FAPI 2.0 Security Profile の要件をデフォルトでは満たさないが、`compliance_level` プロパティを使ってテナントを FAPI 2.0 向けに構成（例：`fapi2_sp_pkj_mtls`）することで要件に近づけられる、という意味である。つまり「機能として持っているが、利用者が明示的に設定しなければ FAPI 2.0 モードにならない」状態を示している。Auth0 の公開ドキュメントにある FAPI 2.0 compliance_level の対応表では、`fapi2_sp_pkj_mtls` / `fapi2_sp_mtls_mtls` のいずれも "Enforces the use of JAR" が **N** となっており、Security Profile 相当の設定モードでは JAR は強制されていない。したがって JAR・JARM を含む FAPI 2.0 Message Signing への対応状況は別途確認が必要であり、PAR 対応は確認できるが Message Signing への対応については断定できない。OpenID Foundation の公式認定は未取得であるため、第三者が検証した準拠保証はない。
+公式ドキュメント（[Configure FAPI Compliance](https://auth0.com/docs/get-started/applications/configure-fapi-compliance)）によると、`compliance_level` を `fapi2_sp_pkj_mtls`（Private Key JWT + mTLS）または `fapi2_sp_mtls_mtls`（mTLS + mTLS）に設定することで FAPI 2.0 Security Profile に対応できる。PAR は必須、JAR は PS256 署名で対応している。ただし **Enterprise Plan + Highly Regulated Identity アドオンが必要**であり、デフォルトでは無効だ。JARM・DPoP についてはドキュメントに記載がなく未確認。Message Signing（JAR 必須 + JARM）への対応は確認できていない。OpenID Foundation の公式認定は未取得であるため、第三者が検証した準拠保証はない。
 
 **Okta**（Workforce Identity Cloud）
 DPoP と PAR は公式ドキュメントで確認できる。一方 JAR・JARM については確認できておらず、FAPI 2.0 Security Profile 全体への準拠については根拠不足の状態である。表の「⚠️ 根拠不足」は Security Profile 準拠の明示的な根拠（FAPI 2.0 モードへの設定方法の公式説明等）が不足しているという意味であり、PAR・DPoP 機能の有無とは別の判断である。
