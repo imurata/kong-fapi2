@@ -1950,7 +1950,7 @@ http://localhost:8000/protected/logout
 | `tls/keycloak-cert.pem` / `keycloak-key.pem` | Keycloak HTTPS サーバー証明書（CN=keycloak.localhost、SAN 付き） |
 | `tls/kong-rp-mtls-cert.pem` / `kong-rp-mtls-key.pem` | Kong RP のクライアント証明書 |
 | `tls/generate.sh` | 上記 4 種類の鍵 / 証明書を再生成するスクリプト |
-| `deck/rp-mtls.yaml` | Kong に投入する RP（mTLS）設定。Certificate / CACertificate エンティティと `tls_client_auth` プラグイン設定 |
+| `deck/rp-mtls.yaml` | Kong に投入する RP（mTLS）設定。Certificate エンティティ（Kong が Keycloak へ提示するクライアント証明書）と `tls_client_auth` プラグイン設定 |
 | `keycloak/realm-import/fapi2-realm.json` の `kong-rp-mtls-client` | `clientAuthenticatorType: client-x509` + `tls.client.certificate.bound.access.tokens=true` |
 | `scripts/rp_mtls_e2e_verify.py` | 自動検証（PAR・mTLS トークン取得・introspection で `cnf.x5t#S256` の一致確認） |
 
@@ -1971,7 +1971,7 @@ docker compose up -d
 deck gateway sync deck/rp-mtls.yaml
 ```
 
-`deck/rp-mtls.yaml` には Certificate / CACertificate エンティティが含まれているため、初回 sync で 5 オブジェクト（Certificate, CACertificate, Service, Route, Plugin）が作成される。
+`deck/rp-mtls.yaml` には Certificate エンティティが含まれているため、初回 sync で 4 オブジェクト（Certificate, Service, Route, Plugin）が作成される。
 
 > Kong コンテナにはローカル CA（`tls/ca-cert.pem`）が `KONG_LUA_SSL_TRUSTED_CERTIFICATE` 経由で渡されている。コンテナを再起動した直後は openid-connect プラグインの JWKS キャッシュがリセットされるが、Keycloak 側の鍵生成タイミングと衝突した場合 `suitable jwk was not found` というエラーが出ることがある。その場合は `docker compose restart kong` で Kong を再起動するとキャッシュが綺麗になり問題が解消する。
 
@@ -2557,7 +2557,7 @@ DPoP を実際に使う構成では、authorization_code フローと組み合�
 
 #### Kong Admin API は `id` フィールドに UUID v4 を要求する
 
-`deck/rp-mtls.yaml` で Certificate / CACertificate エンティティを定義するとき、`id` に任意の文字列（例：`kong-rp-mtls-cert`）を入れると **`expected a valid UUID`** で deck sync が失敗する。UUID v4（例：`8b1c8a5e-...`）を生成して使う必要がある。
+`deck/rp-mtls.yaml` で Certificate エンティティを定義するとき、`id` に任意の文字列（例：`kong-rp-mtls-cert`）を入れると **`expected a valid UUID`** で deck sync が失敗する。UUID v4（例：`8b1c8a5e-...`）を生成して使う必要がある。
 
 ```yaml
 certificates:
