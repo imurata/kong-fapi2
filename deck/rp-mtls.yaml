@@ -102,6 +102,30 @@ services:
           tls_client_auth_cert_id: ce451e1b-9c1e-4184-bc22-3e001336e8ed
           tls_client_auth_ssl_verify: true
 
+          # ── Request object signing (JAR) ──
+          # tls_client_auth handles client *authentication* via the
+          # X.509 cert on the TLS layer; it does NOT provide a key
+          # for signing the Request Object (JAR) at the application
+          # layer. We therefore declare a separate PS256 JWK that
+          # Kong uses solely to sign the JAR. Keycloak verifies the
+          # signature against the matching public JWK registered on
+          # the kong-rp-mtls-client (jwks.string attribute).
+          client_alg:
+            - PS256
+          client_jwk:
+            - kty: RSA
+              use: sig
+              alg: PS256
+              kid: kong-rp-key-1
+              "n": kdSGmOIUGh88o-vFei3LFgQCpRRohsrC7q64f1rr1X7Yg8OTIatmIZBil2N4yF6rbwtHmpzE868WuwYDXpvHU_BlkNZ2HTM5JwjCA2zxBa8lJxJ3Aj40viXTUIAtO2d63D-VqVMLTt6ueeSxAXIlC4NuGfmyZ79S9ox79DcT8H6R4zRQBjFBEz5fK8A9WQ0XLNhYDhGeYX_8cy91-r8sCViubydfCEGZGurX0NAPvhlpGF0Sf-36p6KUIirV3WNWLqe1MHMlXzZuLpE9a6eaqipht79OP4EbREZ-Rk49jYgTkSQmizFI5W6EQa9nXRN9-SBcz_x5ccxoMtnn1_gXEQ
+              "e": AQAB
+              "d": Af7TN6jSRxg503Fgsp8JShwUcC9TDdMc7zinUCDNnM5_RnBI5VtLyrZHzxP-nVlERcD1Ah3WiRISgM0ggy0lAVZHAYAZviULCWhyhSr6sk32922mgLqarKZmWZHjbI5qLTTWhqpa-4GLCCJztJYcASgTe9oBka9ZwoNiF9GgHXiMmgkM4PqZwDGlmkXmgu8mwS4vljZORLo_dANMrpvd8tEfhkxiqZQ_iWDziseVoWDkzHxjDLM09P6glwDWicIvqsDYr_GM2tOy4GNR-FoC4Ic-bnEiHwYwt18HDOkePbHzknzjj3zk0XPVodvKCyukuTBsnEce1rb-VQc8Xk1vVQ
+              "p": yeHqSINtKoJMGkk356sHKtr_J7QjcQt-L0UDCxwwDZIwIhWGZ9ncIMPrEFRETc75TdbxatBNbAIhpfS28Ghc_3P9J_SV78DQWW4Fsp1x7LMSap-6c8Ao5dTezgnWVI2Rap4ISzB6MVLzNp0nBKIjIMiJi9EvvgCuUt1w0H_HHt0
+              "q": uOwMmvNSC-tmX3T7A7llShM0G5yw4HZVG9NkPlyC08LcOpV2J8sl2O_f5mUHiWuoOkOUd8XSL2IJOIGwQzVMus43qjK7gnJZUb9rHCKAaKegJgBgnaVwHrjqrC-S6mi_1__Aj_PiwPlsXO6QjLTj-eRlfIIfs2yZCdZIgVD3w8U
+              dp: DLp1rwS6SUfVzIJ5R938obMVC0fMREBZQFm1i2nHjdN9vWhmBP4zZs1zcKAfflhiV4oJxpZDi1_HB1OahSXPVzvU5kQBgBBEEp9hNJXArQ_NRXO0qb-f1H3LXmo4XTRfyr0UAMmZqqp0MylNYHlohZSfN3WE8RHR69-SUVL9FvE
+              dq: OX8jeDY5h308ymdb-M93P-3yoLc6g8AnPEyg-YbYIrGOuiRopXzTmr0St9cn3cF8gAktK4R1ksf_p_Mi8_KpldeylRfLF4coYHONASV1GZUtBUPOxpV-4_6I8Nql6n6BT860d83T7j5fRBHlHerMi5FJQMpQwv_8IYPf7V1YfCU
+              qi: gt6x5xeYmuiL6I-01v5TtQSBajemo6SRgpxTssMPWaUnFc6LBtxBp7jr0tRQVV1hu2crPyAyww87unF0zE9co0FHj6Gvm8FysGIEzFhYgrpBVBqfJOypOZPg2rvGuA86HWo25AyvwQtqhTFwWSnVQvYCUD74KZaYY2BZ4Q04slw
+
           # ── Operating mode ──
           auth_methods:
             - authorization_code
@@ -120,11 +144,11 @@ services:
           # ── FAPI 2.0 Security Profile requirements ──
           require_pushed_authorization_requests: true
           require_proof_key_for_code_exchange: true
-          # JAR (signed request object) — uses tls_client_auth's
-          # certificate / key for signing as Kong does not get a
-          # separate request_object_signing_key here. Some plugin
-          # versions require client_jwk for JAR; kept off for now.
-          # require_signed_request_object: true
+          # ── FAPI 2.0 Message Signing (JAR option) ──
+          # Sign the PAR Request Object with the client_jwk above
+          # (PS256). Keycloak verifies the signature against the
+          # public JWK registered on the kong-rp-mtls-client.
+          require_signed_request_object: true
 
           # ── Session ──
           session_storage: cookie

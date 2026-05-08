@@ -165,6 +165,7 @@ Kong Gateway を使った FAPI 2.0の検証
     - [Keycloak 26 の PKCS12 トラストストア（`KC_HTTPS_TRUST_STORE_FILE`）は PoC で動かなかった](#keycloak-26-の-pkcs12-トラストストアkc_https_trust_store_fileは-poc-で動かなかった)
     - [Kong の Lua cosocket は OS 信頼ストアを参照しない](#kong-の-lua-cosocket-は-os-信頼ストアを参照しない)
     - [`x509.subjectdn` の厳密一致は外しやすい](#x509subjectdn-の厳密一致は外しやすい)
+    - [`tls_client_auth` を使っても JAR 用の `client_jwk` は別途必要](#tls_client_auth-を使っても-jar-用の-client_jwk-は別途必要)
     - [コンテナ初回起動直後の JWKS キャッシュタイミング](#コンテナ初回起動直後の-jwks-キャッシュタイミング)
 - [付録 - FAPI 認定（Conformance Certification）の取得方法](#付録---fapi-認定conformance-certificationの取得方法)
   - [認定の方式：self-certification](#認定の方式self-certification)
@@ -1001,7 +1002,7 @@ Kong Gateway は `openid-connect` プラグインの設定次第で **RS** に�
 | --- | --- | --- | --- | --- |
 | **検証 1: Kong = RS** | `deck/rs.yaml` | `fapi2-test-client`（client_secret_post） | `scripts/dpop_e2e_verify.py` | Kong が DPoP-bound アクセストークンを正しく検証して RS として保護できること |
 | **検証 2: Kong = RP**（private_key_jwt） | `deck/rp.yaml` | `kong-rp-client`（private_key_jwt + PAR + JAR） | `scripts/rp_e2e_verify.py` | Kong がブラウザ向けに OIDC 認可コードフローを終端し、PAR・JAR・private_key_jwt を実装して RP として動作できること。**ただし sender-constrained token は未到達**（JARM・DPoP は Kong プラグインの制約で不可、詳細は [検証 2（Kong = RP）の補足](#検証-2kong--rpの補足)） |
-| **検証 3: Kong = RP × mTLS** | `deck/rp-mtls.yaml` | `kong-rp-mtls-client`（client-x509 + cert-bound tokens） | `scripts/rp_mtls_e2e_verify.py` | Kong が **mTLS クライアント認証** で Keycloak とトークン交換し、`cnf.x5t#S256` を持つ **証明書バインドのアクセストークン** を取得できること。FAPI 2.0 Security Profile が要求する **sender-constrained token を mTLS 経路で実現** する |
+| **検証 3: Kong = RP × mTLS** | `deck/rp-mtls.yaml` | `kong-rp-mtls-client`（client-x509 + cert-bound tokens + JAR 用 JWKS） | `scripts/rp_mtls_e2e_verify.py` | Kong が **mTLS クライアント認証** で Keycloak とトークン交換し、`cnf.x5t#S256` を持つ **証明書バインドのアクセストークン** を取得できること。FAPI 2.0 Security Profile が要求する **sender-constrained token を mTLS 経路で実現** し、加えて Message Signing の **JAR option（PS256 で署名された Request Object）** まで揃える |
 
 それぞれの構成のセットアップ・検証手順は「[検証 1: Kong = RS](#検証-1-kong--rs)」「[検証 2: Kong = RP](#検証-2-kong--rp)」「[検証 3: Kong = RP × mTLS](#検証-3-kong--rp--mtls)」で詳述する。
 
@@ -1040,11 +1041,15 @@ Kong Gateway は `openid-connect` プラグインの設定次第で **RS** に�
 | --- | --- | --- |
 | クライアント認証 | `private_key_jwt`（PS256） | `tls_client_auth`（X.509 client cert） |
 | sender-constrained token | ❌（DPoP 未対応） | ✅（`cnf.x5t#S256` あり） |
-| PAR / PKCE / JAR | ✅ | ✅ / ✅ / 未使用（鍵管理の都合） |
+| PAR / PKCE / JAR | ✅ / ✅ / ✅ | ✅ / ✅ / ✅ |
 | Backend 連携 | `x-userinfo-*` ヘッダー | 同上 |
-| 必要な追加要素 | 鍵ペア（PS256 JWK） | 鍵ペア + 証明書 + CA + Keycloak HTTPS 設定 |
+| 必要な追加要素 | 鍵ペア（PS256 JWK） | 鍵ペア（JAR 用 PS256 JWK）+ 証明書 + CA + Keycloak HTTPS 設定 |
 
-検証 3 は「**Kong の openid-connect プラグインだけで Security Profile の sender-constrained 要件まで到達できる**」ことを示す構成となる。なお JARM はこちらでも未使用（要件は Message Signing 側）。
+検証 3 は「**Kong の openid-connect プラグインだけで Security Profile の sender-constrained 要件と Message Signing の signed authorization requests（JAR）option まで到達できる**」ことを示す構成となる。
+
+> **JAR と mTLS は別レイヤー** : `tls_client_auth` は TLS ハンドシェイクで X.509 証明書を提示する **クライアント認証**であり、アプリケーション層の **Request Object 署名鍵（JAR）** は提供しない。そのため検証 3 では mTLS 用の証明書とは別に、PS256 の `client_jwk` を deck に投入して JAR を実装している。Keycloak 側は `kong-rp-mtls-client` の Advanced 属性に対応する公開 JWK を登録しており、PAR 受信時にその鍵で Request Object の署名を検証する（誤った鍵で署名すると Keycloak は `400 Bad Request` で PAR を拒否することを negative test で確認済み）。
+>
+> なお JARM（signed authorization responses）は検証 2 と同様の Kong RP 側制約により未使用、Signed Introspection Responses は本 PoC のアーキテクチャ（Kong は token endpoint から直接トークンを受領、introspection 経路を持たない）の対象外である。
 
 #### Kong を RS として使う場合のフロー
 
@@ -2413,10 +2418,11 @@ curl -s \
 | クライアント認証 `private_key_jwt` または `mTLS` | ✅（mTLS / `tls_client_auth`） |
 | sender-constrained token | ✅（mTLS、`cnf.x5t#S256`） |
 | JWT 署名アルゴリズム（PS256/ES256/EdDSA） | ✅（PS256） |
-| Message Signing：JAR | ⚠️ 本検証では未使用（`require_signed_request_object` を有効にすると Kong が `client_jwk` を要求するため、tls_client_auth と併用するには追加設計が必要） |
+| Message Signing：JAR | ✅（`tls_client_auth` とは別レイヤーで PS256 `client_jwk` を投入し、Keycloak 側に同じ公開 JWK を登録して Request Object 署名を検証） |
 | Message Signing：JARM | ❌（Kong プラグインの制約は検証 2 と同じ） |
+| Message Signing：Signed Introspection Responses | – PoC アーキテクチャの対象外（Kong は token endpoint から直接トークンを受領するため introspection 経路を持たない） |
 
-検証 3 で **Security Profile の必須要件は実質的に揃った** 形になる。Message Signing（JAR/JARM）まで踏み込むには Kong 側でクライアント JWK 鍵を別途追加する必要があるが、これは将来課題として残す。
+検証 3 で **Security Profile の必須要件に加えて、Message Signing の signed authorization requests（JAR）option まで実装できている** ことになる。残る JARM は Kong RP 側の plugin 制約により現バージョンでは到達不可。Signed Introspection Responses は認可コードフローとは別レイヤーの機能で、本 PoC のアーキテクチャ対象外。
 
 ---
 
@@ -2824,6 +2830,13 @@ Subject DN を **正規表現** で照合するモードに切り替えている
 
 その他の attributes（`require.pushed.authorization.requests`・`pkce.code.challenge.method: S256`・`request.object.signature.alg: PS256`・`access.token.signed.response.alg: PS256` 等）は `kong-rp-client` と同じである。
 
+```json
+"use.jwks.string": "true",
+"jwks.string": "{\"keys\":[{\"kty\":\"RSA\",\"use\":\"sig\",\"alg\":\"PS256\",\"kid\":\"kong-rp-key-1\",\"n\":\"...\",\"e\":\"AQAB\"}]}"
+```
+
+クライアント認証は X.509 証明書で行う一方、**JAR の Request Object 署名は PS256 鍵**で行う必要があるため、Kong が `client_jwk` で署名した Request Object を Keycloak が検証できるよう、対応する **公開 JWK をクライアント属性に登録** している（鍵自体は検証 2 と同じものを再利用）。これにより `request.object.signature.alg: PS256` + `request.object.required: request` の強制と整合する。Kong 側 deck の `client_jwk` と同じ鍵ペアの公開鍵だけを Keycloak に置く形である。
+
 #### Realm 全体の HTTPS / mTLS 設定（docker-compose.yaml 側）
 
 Keycloak の HTTPS リスナと mTLS 受け入れは realm JSON ではなく `docker-compose.yaml` の環境変数で制御している。
@@ -2987,6 +3000,28 @@ Keycloak の `x509.subjectdn` 設定で OpenSSL 表現の DN（`CN=kong-rp-mtls-
 "x509.subjectdn": ".*CN=kong-rp-mtls-client.*",
 "x509.allow.regex.pattern.comparison": "true"
 ```
+
+#### `tls_client_auth` を使っても JAR 用の `client_jwk` は別途必要
+
+直感的には「クライアント証明書を持っているなら、その鍵で Request Object に署名すればよいのでは」と考えがちだが、Kong の `openid-connect` プラグインの `tls_client_auth` 系設定（`tls_client_auth_cert_id` 等）は **TLS ハンドシェイクでクライアント証明書を提示するためだけ** に使われ、アプリケーション層の Request Object 署名鍵としては使われない。
+
+`require_signed_request_object: true` を有効にする場合は、mTLS とは別に PS256 の `client_jwk` を deck に投入する必要がある。Keycloak 側も `kong-rp-mtls-client` の Advanced 属性に `use.jwks.string: true` + `jwks.string` で対応する公開 JWK を登録する必要があり、これを忘れると Keycloak は PAR を **`400 invalid_request_object`** で拒否する（誤った鍵で署名すると同様に 400 になることを negative test で確認済み）。
+
+```yaml
+client_jwk:
+  - kty: RSA
+    use: sig
+    alg: PS256
+    kid: kong-rp-key-1
+    "n": ...
+    "e": AQAB
+    ...
+client_alg:
+  - PS256
+require_signed_request_object: true
+```
+
+なお `require_signed_request_object` は Kong の挙動を変える効果が弱く（`client_jwk` が設定されていれば自動的に署名する挙動）、JAR の有無を実質的に強制しているのは **Keycloak 側の `request.object.required: request`** 属性である。Kong だけで JAR を強制したい場合は別途プラグイン側設定の挙動を確認すること。
 
 #### コンテナ初回起動直後の JWKS キャッシュタイミング
 

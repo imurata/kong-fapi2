@@ -85,6 +85,8 @@ services:
       KC_HTTPS_CLIENT_AUTH: request
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_LOG_LEVEL: INFO
+      KC_HTTP_ACCESS_LOG_ENABLED: "true"
     volumes:
       - ./keycloak/realm-import:/opt/keycloak/data/import
       - ./tls:/opt/keycloak/conf/tls:ro
