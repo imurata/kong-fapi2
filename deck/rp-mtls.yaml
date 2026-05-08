@@ -70,31 +70,6 @@ certificates:
     tags:
       - kong-rp-mtls
 
-ca_certificates:
-  - id: 82dc741a-addf-4332-9008-7a7232899af2
-    cert: |
-      -----BEGIN CERTIFICATE-----
-      MIIDGTCCAgGgAwIBAgIUFM0wOgleaMgf0KUH7tF/NLARMjswDQYJKoZIhvcNAQEL
-      BQAwHDEaMBgGA1UEAwwRS29uZyBGQVBJMiBQb0MgQ0EwHhcNMjYwNTA3MDcxODI4
-      WhcNMzYwNTA0MDcxODI4WjAcMRowGAYDVQQDDBFLb25nIEZBUEkyIFBvQyBDQTCC
-      ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALOrpW62/86PPixlb6nd+Aho
-      fAdqrnQ30xLlIj2MdomDUSZS9idbQyC7sUXpEvZ9vYX1nWjwM/toHQWtM95Vo43p
-      t+FPMj4fcAKo0jtMB+hwyzzTGathcmLbVGO+dWEtpt2AsxvJNO8ah/rD4+eS+dTV
-      KGnmoQkRkBoCFeRBDnhY8Sh22AmmnOHAQ7wT3hRv+/tRQ+uEO6TMyU1ONRgLsPDr
-      iqawDbSrMrKUkUfxNLdaE9OpHmVI2C8u1soy10BzSCoqP4AXKBBGWBEVLxnAsdjk
-      TnwcNKdLSCr9YJm9BGD1qKXQ+EXKtNauDUHYMRo9Q71GDQP0QUSyPK0GLghsoJ0C
-      AwEAAaNTMFEwHQYDVR0OBBYEFMtE56W2QW7nIpZ/0Z2/j9zfkhpfMB8GA1UdIwQY
-      MBaAFMtE56W2QW7nIpZ/0Z2/j9zfkhpfMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZI
-      hvcNAQELBQADggEBACkF692K41N2CarvEQ19zEEkBACXPrY55JYOisimUq3D+1cs
-      05JlWQOsl9/mrxBRk5V3h0bQ49Ku2nO2cNyJU9t0Vcdk7NlODXVKJKv6bM+exZeQ
-      FxVQqNrRvIUTYrp/prHbz84ovjlp2rfuwoDGErOxi8VnMWrsXHCy9I2rZmsrirtu
-      aES+eCLqY45b3qHtT3FNo1uQ9JOH8GlQeR27avAA0eRno2pdNdyYQwYwERoT30BM
-      OcA7UDWJ+pVyY6qvGqy7EIv3nJE8VX0wbbaFwiQxJwPohLVGNLXy/CU9eH1GI0Ts
-      6Ve8XWNuT9LP2g+R21A9cjcHtLogrsdEWiJ+f2k=
-      -----END CERTIFICATE-----
-    tags:
-      - fapi2-ca
-
 services:
   - name: rp-mtls-protected
     url: http://httpbin/anything

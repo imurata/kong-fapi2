@@ -132,7 +132,7 @@ Kong Gateway を使った FAPI 2.0の検証
     - [セッション設定](#セッション設定)
     - [Backend へのユーザー情報伝達](#backend-へのユーザー情報伝達)
   - [Kong Gateway（deck/rp-mtls.yaml）](#kong-gatewaydeckrp-mtlsyaml)
-    - [Certificate / CACertificate エンティティ](#certificate--cacertificate-エンティティ)
+    - [Certificate エンティティ](#certificate-エンティティ)
     - [tls\_client\_auth でのクライアント認証](#tls_client_auth-でのクライアント認証)
     - [HTTPS+mTLS エンドポイントへの接続](#httpsmtls-エンドポイントへの接続)
     - [Kong コンテナ側の TLS 信頼設定](#kong-コンテナ側の-tls-信頼設定)
@@ -688,7 +688,7 @@ sequenceDiagram
 
 ```text
 POST /introspect          ┌───────────────┐
-─────────────────────────►│  認可サーバー  │
+─────────────────────────►│  認可サーバー   │
 RS                        │     (AS)      │
                           └───────┬───────┘
         application/json          │
@@ -760,6 +760,8 @@ Message Signing 仕様は signed authorization requests（JAR）・signed author
 ### Sender-constrained Access Token と DPoP / mTLS
 
 FAPI 2.0 Security Profile はアクセストークンを **sender-constrained access token** にすることを必須としている。「盗まれたアクセストークンを第三者が使えないようにする」のがゴールで、その実現方式として **DPoP** と **mTLS** の 2 つが認められている。どちらも目的は同じだが、トークンを何にバインドするか・どこで証明するかが違う。
+
+> **`cnf` クレームとは**: [RFC 7800（Proof-of-Possession Key Semantics for JWTs）](https://www.rfc-editor.org/rfc/rfc7800) で定義された JWT 標準クレームで、`cnf` は **"confirmation"**（確認情報）の略。アクセストークンの **正当な使用者を識別するための鍵情報** を埋め込むためのフィールドで、AS がトークンに付与し、RS が API 呼び出し時に「リクエスト元が `cnf` の指す鍵 / 証明書を持っているか」を確認する。サブクレームは方式によって異なり、**DPoP では `cnf.jkt`**（公開鍵の JWK Thumbprint）、**mTLS では `cnf.x5t#S256`**（クライアント証明書の SHA-256 Thumbprint）が使われる。これが入っていることで、トークンが **誰の鍵にバインドされているか** が暗号学的に証明できる仕組みになる。
 
 | 観点 | DPoP（RFC 9449） | mTLS（RFC 8705） |
 | --- | --- | --- |
@@ -917,9 +919,9 @@ API Gateway は FAPI 2.0 においてリソースサーバー（RS）として�
 
 > **注意**: この表は API Gateway が **RS として**備える機能の比較であり、IdP（AS）としての機能比較ではない。PAR・JAR・JARM はゲートウェイが OIDC RP / OAuth client mode として動作する場合に関係する機能である。
 
-| 製品 | DPoP 検証 | mTLS 証明書バインド | PAR/JAR/JARM（RP / OAuth client mode 時） | FAPI 明示サポート | 備考 |
+| 製品 | DPoP 検証 | mTLS 証明書バインド | PAR / JAR / JARM（RP / OAuth client mode 時） | FAPI 明示サポート | 備考 |
 | --- | --- | --- | --- | --- | --- |
-| **Kong Gateway** | ✅ | ✅ | ✅ | ✅ ドキュメントあり | `openid-connect` プラグインで全機能をネイティブサポート |
+| **Kong Gateway** | ✅ | ✅ | PAR ✅ / JAR ✅ / **JARM ⚠️ 送信側のみ**（受信側 JWT 検証は未実装、本リポジトリの検証 2 で確認） | ✅ ドキュメントあり | `openid-connect` プラグインで実装。JARM は `response_mode=query.jwt` を AS に送れるが、戻りの JWT を解釈できないため認可フローが完結しない（[検証 2 の補足](#検証-2kong--rpの補足)） |
 | **MuleSoft Anypoint** | 不明 | 不明 | 不明 | 不明 | 公開ドキュメントで FAPI 固有 RS 機能を確認できず |
 | **AWS API Gateway** | ❌ | ⚠️ トランスポート層のみ | ❌ | ❌ | JWT Authorizer による基本検証のみ。DPoP・証明書バインド検証はカスタム Lambda が必要 |
 | **Google Apigee** | 不明 | 不明 | 不明 | 不明 | 公開ドキュメントで FAPI 固有 RS 機能を確認できず。FAPI 準拠が必要な場合は外部 AS やカスタム実装との組み合わせが必要になる可能性がある |
@@ -935,7 +937,11 @@ API Gateway は FAPI 2.0 においてリソースサーバー（RS）として�
 
 **IBM API Connect** 自体の FAPI RS 機能は本稿の調査範囲では確認できなかった。IBM の公開資料では IBM Security Verify（ISVA）側に DPoP バインドトークン・証明書バインドトークンの設定が存在するが、ISVA は AS（認可サーバー）としての機能であり、API Connect（ゲートウェイ）の RS 機能とは別物である。
 
-**Kong Gateway** は FAPI 2.0 の RS 機能（DPoP 検証・mTLS 証明書バインド）をプラグイン 1 つでネイティブにサポートしており、加えて OIDC RP / OAuth client mode として動作する場合の PAR・JAR・JARM も同プラグインで対応している。他製品と比較して追加実装の必要がない点が特徴である。
+**Kong Gateway** は FAPI 2.0 の RS 機能（DPoP 検証・mTLS 証明書バインド）をプラグイン 1 つでネイティブにサポートしており、加えて OIDC RP / OAuth client mode として動作する場合の **PAR・JAR は同プラグインで完結** している（本リポジトリの[検証 2](#検証-2-kong--rp) で実証）。他製品と比較して追加実装の必要がない点が特徴である。
+
+ただし **JARM については `response_mode=query.jwt` を AS に送る送信側機能のみが実装されており、AS から戻ってきた JWT 形式の認可レスポンスを検証する受信側機能は未実装** である。設定値としては `query.jwt` を受け付けてしまうが、実際に有効化すると Kong がコールバック URL のクエリ文字列に `code` パラメータを見つけられず、認可フローが先に進まない（詳細は[検証 2 の補足](#検証-2kong--rpの補足)）。**JARM が必要な場合は本稿執筆時点では Kong の openid-connect プラグインだけでは完結しない** ため、Backend / BFF を RP に置く構成が必要になる。
+
+なお FAPI 2.0 Security Profile **本体では JARM は要求されない**（[Message Signing](#fapi-20-message-signing) の signed authorization responses option を採用した場合のみ必須）ため、Security Profile に限った準拠であれば Kong の JARM 受信側未実装は実質的な制約にならない。
 
 ---
 
@@ -975,9 +981,9 @@ Kong Gateway は `openid-connect` プラグインの設定次第で **RS** に�
 | | **Kong = RS（API 保護専用）** | **Kong = RP（OIDC 終端）** |
 | --- | --- | --- |
 | **Kong の責務** | アクセストークン検証・DPoP / mTLS 検証・スコープ確認 | 上記に加えて、認可コードフロー全体（PAR / JAR 送信、トークン取得、JARM 検証）・セッション管理・logout |
-| **メリット** | ・責務分離が明確で、Kong は **API 保護のみ** に専念できる<br>・業務ロジック・consent・トークンライフサイクル制御を Backend / BFF 側で **自由に書ける**<br>・セッションや独自 state を Backend で持てるので拡張性が高い<br>・Kong プラグインの制約に縛られない | ・Backend が OAuth / OIDC を **一切意識せずに済む**（OAuth 非対応のレガシー Backend をそのまま FAPI 2.0 配下に置ける）<br>・PAR / JAR / `private_key_jwt` / mTLS の RP 機能が **deck の設定だけで動く**（実装ゼロ）<br>・PoC・検証環境を **短時間で組める**<br>・セッション管理・トークン更新・logout を Kong が肩代わり |
-| **デメリット** | ・**Backend / BFF に OIDC RP 実装が必須**（FAPI 2.0 のクライアント側責務をすべて Backend が担う）<br>・Backend を所有・改修できない場合は採用不可 | ・Kong が **認証・認可・API 保護・セッションをすべて抱える**（責務集中）<br>・Kong プラグインの **機能制約に縛られる**（検証 2 で判明：DPoP の RP 側生成不可・JARM の RP 側受信不可など、詳細は[検証 2 の補足](#検証-2kong--rpの補足)）<br>・consent 取り消し等の業務固有ロジックを **Backend 側で動かしにくい**<br>・セッションストア・Cookie 設計を Kong 側で持つ必要があり、運用設計が増える |
-| **適した場面** | 本番設計、業務ロジックを持つ Backend がある高セキュリティ API | PoC・デモ、レガシー Backend 統合、BFF 代替 |
+| **メリット** | ・**責務分離が明確** で、Kong は API 保護のみに専念できる<br>・業務ロジック・consent・トークンライフサイクル制御を Backend / BFF 側で **自由に書ける**<br>・セッション・独自 state を Backend で持てるので **拡張性が高い**<br>・Kong プラグインの機能制約に縛られない<br>・Backend ごとに認証・認可ポリシーを差別化しやすい | ・**OIDC RP 機能を Kong に一元化できる**（複数 Backend 横断の認証ポリシー・セッション管理・監査ログが Kong に集約され、ガバナンスが効きやすい。Backend 側で OIDC を再実装する必要もなく一貫性を保てる）<br>・Backend が OAuth / OIDC を **一切意識せずに済む**（OAuth 非対応のレガシー Backend をそのまま FAPI 2.0 配下に置ける）<br>・PAR / JAR / `private_key_jwt` / mTLS の RP 機能が **deck の設定だけで動く**（実装ゼロ）<br>・PoC・検証環境を **短時間で組める**<br>・セッション管理・トークン更新・logout を Kong が肩代わり |
+| **デメリット** | ・**Backend / BFF に OIDC RP 実装が必須**（FAPI 2.0 のクライアント側責務をすべて Backend が担う）<br>・Backend を所有・改修できない場合は採用不可<br>・**OIDC 実装が Backend ごとに分散** するため、ポリシー一貫性の担保や監査の集約に運用コストがかかる | ・一元化の裏返しとして **Kong が単一障害点 / ボトルネック** になりやすい（Kong が落ちるとすべての保護下 API が使えなくなる、性能要件は Kong 側でスケール設計が必要）<br>・**Kong プラグインの機能制約に縛られる**（検証 2 で判明：DPoP の RP 側生成不可・JARM の RP 側受信不可など、Backend 側で迂回することもできない。詳細は[検証 2 の補足](#検証-2kong--rpの補足)）<br>・consent 取り消し等の業務固有ロジックを **Backend 側で動かしにくい**<br>・セッションストア・Cookie 設計を Kong 側で持つ必要があり、運用設計が増える |
+| **適した場面** | 本番設計、業務ロジックを持つ Backend がある高セキュリティ API、Backend ごとに独自の認可ロジックを持たせたい場合 | PoC・デモ、レガシー Backend 統合、BFF 代替、**複数 Backend を共通の OIDC ポリシーで一括保護したい場合** |
 
 実運用での選び方の指針は以下の通り。
 
@@ -1096,7 +1102,9 @@ sequenceDiagram
 
 #### Kong を RP として使う場合のフロー
 
-次に、Kong を RP として配置する構成を見ていく。この構成では Kong が「ブラウザを終端する OIDC RP」となり、PAR/JAR/PKCE/private_key_jwt/JARM/DPoP のすべてを Kong プラグインが肩代わりする。Backend は OIDC を一切意識せず、Kong から渡されるユーザー情報（ヘッダー経由）だけを見て業務処理を行えばよい。
+次に、Kong を RP として配置する構成を見ていく。この構成では Kong が「ブラウザを終端する OIDC RP」となり、PAR / JAR / PKCE / private_key_jwt / DPoP / JARM などを Kong プラグインが肩代わりする想定である。Backend は OIDC を一切意識せず、Kong から渡されるユーザー情報（ヘッダー経由）だけを見て業務処理を行えばよい。
+
+> **注意**: 以下のシーケンス図と YAML 設定例は **「FAPI 2.0 + Message Signing をすべて RP に取り込んだ最大構成」** を示すための理論モデルである。本リポジトリの[検証 2](#検証-2-kong--rp) で実証したところ、Kong の `openid-connect` プラグインの現バージョンでは **DPoP の RP 側生成と JARM の RP 側受信が未実装** のため、図中の DPoP / JARM 部分は **実際には Kong だけでは完結しない**（詳細は[検証 2 の補足](#検証-2kong--rpの補足)）。完結する範囲（PAR + JAR + private_key_jwt + PKCE）が[検証 2](#検証-2-kong--rp)、sender-constrained を mTLS 経路で実現したのが[検証 3](#検証-3-kong--rp--mtls) である。
 
 OAuth 非対応のレガシー Backend を FAPI 2.0 の保護下に置きたい場合や、PoC として Kong プラグインの設定だけで FAPI 2.0 フローを動かしたい場合に有効な構成である。
 
@@ -1251,7 +1259,7 @@ plugins:
 - **`client_auth: private_key_jwt` + `client_jwk`** — FAPI 2.0 の Confidential Client 要件を満たす。Kong は `client_jwk` の秘密鍵で client assertion JWT を署名し、PAR・トークンエンドポイントへ送る
 - **`require_pushed_authorization_requests: true`** — Kong が必ず PAR エンドポイント経由で認可リクエストを送る。素の `/authorize` を直接叩く挙動を禁止する
 - **`require_signed_request_object: true` + `request_object_signing_algorithm: PS256`** — PAR リクエストに JAR（署名済み Request Object）を載せる。Message Signing 要件を満たす
-- **`response_mode: [jwt]` + `authorization_signed_response_alg: PS256`** — JARM を使用し、認可レスポンス（code 等）を署名済み JWT で受け取る
+- **`response_mode: [jwt]` + `authorization_signed_response_alg: PS256`** — JARM で認可レスポンス（code 等）を署名済み JWT で受け取る設定。**ただし本稿執筆時点の Kong プラグインでは送信側のみ実装で受信側 JWT の検証が未対応**のため、実際に有効化すると認可フローがコールバック時点で停止する（[検証 2 の補足](#検証-2kong--rpの補足) 参照）
 - **`pkce: strict` + `pkce_method: S256`** — PKCE を必須化、ハッシュ方式は S256 のみ許可
 - **`proof_of_possession_dpop: strict`** — Kong 自身が DPoP Proof を生成し、sender-constrained なアクセストークンを取得する。RS 構成では「受け取った Proof を検証する」だったが、RP では「Proof を生成する」側になる
 - **`upstream_headers_claims` / `upstream_headers_names`** — トークンから取り出したクレームをヘッダーで Backend に伝える。Backend は OAuth を意識せず、ヘッダーだけ見ればよい
@@ -1282,7 +1290,7 @@ Kong Gateway の `openid-connect` プラグインは、FAPI 2.0 に必要な技�
 | --- | --- | --- | --- |
 | PAR | `pushed_authorization_request_endpoint` | Security Profile: PAR 必須 | RP モード |
 | JAR | `require_signed_request_object: true` | Message Signing: JAR | RP モード |
-| JARM | `response_mode: query.jwt` 等 | Message Signing: JARM | RP モード |
+| JARM | `response_mode: query.jwt` 等 | Message Signing: JARM | RP モード（**送信側のみ実装**：受信側の JWT 検証は未対応で、実際に有効化すると認可フローが停止する。詳細は[検証 2 の補足](#検証-2kong--rpの補足)） |
 | DPoP 検証 | `proof_of_possession_dpop: strict` | Security Profile: sender-constrained token | RS モード |
 | mTLS 証明書バインド検証 | `proof_of_possession_mtls: strict` | Security Profile: sender-constrained token | RS モード |
 | mTLS クライアント認証 | `client_auth: tls_client_auth` | Security Profile: 強いクライアント認証 | RS モード |
@@ -1875,7 +1883,9 @@ http://localhost:8000/protected
 
 ##### 2. alice / alice-pass でログインする
 
-ログイン成功後、Keycloak がブラウザを Kong のコールバック URL（`/protected?response=<JARM JWT>`）にリダイレクトする。Kong は JARM JWT を検証し、認可コードを取り出して Keycloak のトークンエンドポイントへ private_key_jwt 認証 + DPoP Proof で交換する。
+ログイン成功後、Keycloak がブラウザを Kong のコールバック URL（`/protected?code=<認可コード>&state=<state>`）にリダイレクトする。Kong は受け取った認可コードを Keycloak のトークンエンドポイントへ private_key_jwt 認証で交換する。
+
+> 本検証では JARM・DPoP は使用していない（Kong プラグインの制約による、詳細は[検証 2 の補足](#検証-2kong--rpの補足)）。Message Signing 仕様の signed authorization responses option を採用した完全な構成では、コールバック URL は `/protected?response=<JARM JWT>` の形になる。
 
 ##### 3. Kong からのレスポンスを確認する
 
@@ -1900,6 +1910,31 @@ http://localhost:8000/protected/logout
 検証 3 では **検証 2 で到達できなかった sender-constrained access token** を **mTLS 方式（RFC 8705）** で実現する。Kong は Keycloak の HTTPS（mTLS）エンドポイントに対してクライアント証明書を提示し、Keycloak はその証明書の SHA-256 thumbprint を `cnf.x5t#S256` クレームに埋め込んでアクセストークンを発行する。FAPI 2.0 Security Profile が sender-constrained token として認める「DPoP **または** mTLS」のうち、Kong の `openid-connect` プラグインで実装できるのは mTLS 方式である。
 
 > 実装中に踏んだ注意点（Certificate エンティティの UUID 要件、`KC_TRUSTSTORE_PATHS` への切替、`KONG_LUA_SSL_TRUSTED_CERTIFICATE`、`x509.subjectdn` の正規表現マッチ、JWKS キャッシュ問題 など）は「[付録 - 検証中に判明した注意点](#付録---検証中に判明した注意点)」にまとめている。
+
+#### mTLS の適用範囲（どこと、どこの間？）
+
+検証 3 で「mTLS」と呼んでいるのは **Kong（RP）と Keycloak（AS）の間だけ** である。本検証の通信全体を切り出すと次のようになる。
+
+```text
+[ブラウザ]  ──── HTTP (plain) ────>  [Kong :8000]  ──── HTTP (plain) ───>  [httpbin]
+                                          │
+                                          │ ↑↓  ★mTLS（HTTPS + 双方向クライアント証明書認証）
+                                          │
+                                          ↓
+                                      [Keycloak :9443]
+                                          - PAR endpoint（mtls_endpoint_aliases）
+                                          - token endpoint（mtls_endpoint_aliases）
+```
+
+| 区間 | プロトコル | mTLS か？ | 理由 |
+| --- | --- | --- | --- |
+| **ブラウザ ↔ Kong**（`http://localhost:8000/protected-mtls`） | HTTP | ❌ 平文 | PoC 用に簡略化。本番では Kong の Listener を HTTPS（8443）にして、ブラウザ向けにはサーバー認証のみの TLS を張る（**mTLS は不要**、ユーザーは証明書を持たないため） |
+| **Kong ↔ Keycloak**（`https://keycloak.localhost:9443/...`） | HTTPS + mTLS | ✅ **本検証の本丸** | Kong が `tls_client_auth_cert_id` で指定したクライアント証明書を提示し、Keycloak は `KC_TRUSTSTORE_PATHS` の CA で検証する（同時に Kong も Keycloak のサーバー証明書を **`KONG_LUA_SSL_TRUSTED_CERTIFICATE` 経由で読み込んだ CA** で検証する、双方向認証） |
+| **Kong ↔ httpbin（Backend）** | HTTP | ❌ 平文 | Kong と Backend の間は信頼境界の内側として平文。本番でも一般に Service Mesh（mTLS）や TLS 終端の設計に応じる |
+
+つまり **検証 3 の mTLS は「Kong が AS に対して『私はこの証明書を持つクライアントです』と暗号学的に名乗るための経路」**であり、ユーザー側（ブラウザ）には一切影響しない。FAPI 2.0 が要求する sender-constrained token は **AS が発行時に Kong のクライアント証明書 thumbprint をトークンに埋め込む** ことで実現されるので、AS との **クライアント認証経路が mTLS** であれば成立する。
+
+> **`deck/rp-mtls.yaml` の Service / Route が HTTPS 設定を持っていない理由**: 上述の通り、Kong の **Listener 側（ブラウザ向け）** には mTLS は不要。`tls_client_auth` で参照される Certificate エンティティは **Kong が外向きに（Keycloak へ）クライアントとして提示する** ためのもので、Service の `url: http://httpbin/anything` や Route の `protocols: [http, https]` とは独立に動く。`deck/rp-mtls.yaml` が一見すると HTTP しか出てこないように見えるのは、この理由による。
 
 #### 検証 3 の構成
 
@@ -2190,7 +2225,7 @@ upstream_headers_names:
 
 検証 3 で Kong を RP として動作させ、Keycloak と **mTLS で相互認証** するための設定。`deck/rp.yaml` との違いは「クライアント認証が `private_key_jwt` から `tls_client_auth` に変わり、すべてのバックチャネルが HTTPS（mTLS）になる」点である。
 
-#### Certificate / CACertificate エンティティ
+#### Certificate エンティティ
 
 ```yaml
 certificates:
@@ -2201,17 +2236,13 @@ certificates:
     key: |
       -----BEGIN PRIVATE KEY-----
       <対応する秘密鍵 PEM>
-
-ca_certificates:
-  - id: 82dc741a-addf-4332-9008-7a7232899af2
-    cert: |
-      -----BEGIN CERTIFICATE-----
-      <ローカル CA の証明書 PEM>
 ```
 
-Kong は **Certificate エンティティ** に登録した cert+key を mTLS 接続時のクライアント証明書として提示する。**CACertificate エンティティ** は今後 Kong RS 側で `proof_of_possession_mtls: strict` を有効にしたときの検証チェーンとして使う。
+Kong は **Certificate エンティティ** に登録した cert+key を mTLS 接続時のクライアント証明書として提示する。`tls_client_auth_cert_id` でこのエントリを UUID で参照する。
 
 > Kong の Admin API は `id` に **UUID v4** を要求する（任意の文字列を `id` に書くと `expected a valid UUID` エラーになる）。本リポジトリでは固定 UUID を埋め込んでおり、`tls_client_auth_cert_id` で同じ UUID を参照している。
+>
+> **`ca_certificates` エンティティは本検証では不要**（`deck/rp-mtls.yaml` には記載していない）。`openid-connect` プラグインは `ca_certificates` を直接参照せず、Keycloak サーバー証明書の検証は **`tls_client_auth_ssl_verify: true` + Kong プロセスレベルの `KONG_LUA_SSL_TRUSTED_CERTIFICATE`（docker-compose.yaml で指定する CA PEM）** で行われる。Kong を RS としても兼ねて `proof_of_possession_mtls: strict` でクライアント証明書バインドトークンを検証する構成に拡張するなど、別プラグインが CA エンティティを参照するケースが出てきた段階で改めて追加すればよい。
 
 #### tls_client_auth でのクライアント認証
 
