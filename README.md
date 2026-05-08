@@ -106,6 +106,7 @@ Kong Gateway を使った FAPI 2.0の検証
       - [1. Kong に RP 設定を反映する](#1-kong-に-rp-設定を反映する)
       - [2. ルートが投入されたことを確認する](#2-ルートが投入されたことを確認する)
     - [検証 2 自動検証スクリプト](#検証-2-自動検証スクリプト)
+    - [検証 2 のステップ詳細解説（スクリプトとログで追う）](#検証-2-のステップ詳細解説スクリプトとログで追う)
     - [検証 2 ブラウザでの手動確認](#検証-2-ブラウザでの手動確認)
       - [1. ブラウザで `/protected` にアクセスする](#1-ブラウザで-protected-にアクセスする)
       - [2. alice / alice-pass でログインする](#2-alice--alice-pass-でログインする)
@@ -1868,6 +1869,172 @@ python3 scripts/rp_e2e_verify.py
 > Kong の openid-connect プラグインは、コールバック・コード交換・upstream へのフォワードを **同一 HTTP トランザクション** で処理する。検証 1（RS）のように「302 で /protected に戻ってから再度 GET」というステップは存在せず、ステップ [4] の 200 レスポンスがそのまま httpbin の echo 結果を含んでいる。
 >
 > **注意**: 検証スクリプトは `request_uri` の存在やセッション Cookie の発行までを確認するが、PAR リクエストで実際に `private_key_jwt` 認証が使われたか、JAR の署名が PS256 で行われたかは、Keycloak のログ（`docker logs fapi2-keycloak`）や admin API で `kong-rp-client` のセッション情報を確認する必要がある。
+
+#### 検証 2 のステップ詳細解説（スクリプトとログで追う）
+
+`scripts/rp_e2e_verify.py` は **ブラウザの代わり（User-Agent 役）** として動いており、Kong RP プラグインが行う FAPI 2.0 のメカニクス（PAR・JAR・private_key_jwt・トークン交換）は **Kong が back-channel で実施** している。本セクションは各ステップで「**ユーザー側に見える動き**」と「**Kong が裏でやっていること**」を分けて解説し、ログでどこまで観察できるかも示す。
+
+> 以下のセクションでは Step 1 を curl で実行する例を載せるが、**Step 2 以降は Keycloak が `Secure; SameSite=None` 付きの Cookie を発行する**。macOS の curl（SecureTransport ベース）は HTTP 経由で受け取った Secure Cookie を Cookie jar に保存しないため、curl だけで Keycloak ログイン POST まで通すのはやや煩雑になる。素直に `python3 scripts/rp_e2e_verify.py` を別ターミナルで動かしながら、本セクションの解説と Kong / Keycloak ログを照らし合わせて読むことを推奨する。
+
+##### 0. ログ観察用ターミナルを開く
+
+別ターミナルで Kong / Keycloak のログをストリームしておく。
+
+```bash
+# Kong（openid-connect プラグインの discovery / JWKS / access log）
+docker compose logs -f kong
+
+# Keycloak（ログインフォーム表示・credentials 検証など）
+docker compose logs -f keycloak
+```
+
+デフォルト設定では **PAR / token エンドポイントへの内部 POST まではログに出ない**。詳細トレースが必要なら下記を `docker-compose.yaml` に追記して `docker compose up -d` し直すと、Kong の openid-connect プラグイン詳細と Keycloak の HTTP access log が出るようになる。
+
+```yaml
+services:
+  kong:
+    environment:
+      KONG_LOG_LEVEL: debug          # openid-connect プラグインの token request 詳細が出る
+  keycloak:
+    environment:
+      KC_LOG_LEVEL: INFO
+      KC_HTTP_ACCESS_LOG_ENABLED: "true"   # PAR・/auth・/token への HTTP リクエストが access log に出る
+```
+
+##### Step 1：未認証で `/protected` にアクセス → 302 redirect
+
+**ユーザー側のコマンド**:
+
+```bash
+curl -i -s -o /dev/null -D - http://localhost:8000/protected
+```
+
+**期待する出力**:
+
+```text
+HTTP/1.1 302 Moved Temporarily
+Set-Cookie: authorization=AQAA...; Path=/; HttpOnly      ← Kong が PKCE/state を保持する一時 Cookie
+Location: http://keycloak.localhost:9080/realms/fapi2/protocol/openid-connect/auth
+          ?client_id=kong-rp-client
+          &request_uri=urn:ietf:params:oauth:request_uri:<UUID>
+```
+
+**確認ポイント**:
+
+- `Location` に **`request_uri=urn:ietf:params:oauth:request_uri:...`** が含まれている → Kong が **裏で Keycloak の PAR エンドポイントを叩いて `request_uri` を取得した** ことの証拠
+- `client_id=kong-rp-client` → `deck/rp.yaml` の設定が反映されている
+- `Set-Cookie: authorization=...` → Kong が **`code_verifier`（PKCE）・`state`・`nonce` を暗号化して Cookie に格納**。次のリダイレクト後にブラウザがこれを送り返すことで Kong が照合できる
+
+**Kong が back-channel で行ったこと（時系列）**:
+
+1. discovery URL（`http://keycloak.localhost:9080/realms/fapi2/.well-known/openid-configuration`）からエンドポイント情報を取得・キャッシュ
+2. `code_verifier` をランダム生成し、`code_challenge = BASE64URL(SHA256(code_verifier))` を計算
+3. **JAR**（署名付き Request Object）を構築し、`deck/rp.yaml` の `client_jwk` の秘密鍵で **PS256 署名**
+4. **`client_assertion`**（`private_key_jwt`）を別途構築し、同じ秘密鍵で PS256 署名
+5. **Keycloak の PAR エンドポイント** `POST /realms/fapi2/protocol/openid-connect/ext/par/request` を叩く（form-encoded body：`request=<JAR JWT>`、`client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`、`client_assertion=<client_assertion JWT>`）
+6. レスポンスから `request_uri` を取得し、ブラウザ向けの 302 Location ヘッダに埋め込む
+
+**ログで観察できるもの**:
+
+```text
+# docker compose logs kong（info レベル）
+[lua] cache.lua:577 discover(): loading jwks from http://keycloak.localhost:9080/realms/fapi2/protocol/openid-connect/certs
+"GET /protected HTTP/1.1" 302 0 "-" "curl/8.7.1"
+```
+
+`KONG_LOG_LEVEL=debug` を有効にすると、JAR / client_assertion の生成と PAR への POST が詳細ログとして出る。Keycloak access log を有効にすれば、Kong コンテナ IP（例：`172.25.0.x`）から `POST /realms/fapi2/protocol/openid-connect/ext/par/request HTTP/1.1 201` が記録される。
+
+##### Step 2：Authorize URL を follow して Keycloak ログイン画面を取得
+
+**ユーザー側で起きること**:
+
+ブラウザが Step 1 の Location（`http://keycloak.localhost:9080/.../auth?client_id=...&request_uri=urn:...`）にアクセスすると、Keycloak は **`request_uri` を内部のキャッシュから引いて元の認可リクエストを復元** し、ログインフォーム HTML を返す。Set-Cookie で `AUTH_SESSION_ID`・`KC_AUTH_SESSION_HASH`・`KC_RESTART` などの **Keycloak 側セッション Cookie** が発行される。
+
+**確認ポイント**:
+
+- フォームの `action` URL に `session_code=...` と `execution=...` が含まれる（Keycloak が認可コンテキストを紐付けるためのトークン）
+- **Kong は不関与**（`Step 2` の通信はブラウザ ↔ Keycloak のみ）
+
+**ログで観察できるもの**:
+
+`KC_HTTP_ACCESS_LOG_ENABLED=true` の場合、Keycloak access log にブラウザ IP からの `GET /realms/fapi2/protocol/openid-connect/auth?... HTTP/1.1 200` が記録される。
+
+##### Step 3：認証情報を POST → 認可コードのコールバック
+
+**ユーザー側で起きること**:
+
+`username=alice` と `password=alice-pass` をフォームの `action` URL に POST すると、Keycloak は credentials を検証し、認可コードを発行して **Kong のコールバック URL**（`redirect_uri=http://localhost:8000/protected`）に 302 redirect する。本検証は JARM 不採用のため、コールバック URL は次の形:
+
+```text
+http://localhost:8000/protected?state=<state>&session_state=<sid>&iss=http%3A%2F%2Fkeycloak.localhost%3A9080%2Frealms%2Ffapi2&code=<auth_code>
+```
+
+**確認ポイント**:
+
+- **`code=...`** が乗る（**`response=<JWT>`** ではない）→ JARM ではなく plain `code` で受信。詳細は[検証 2 の補足](#検証-2kong--rpの補足)
+- `iss` クレームがコールバック URL に乗る（OAuth 2.0 Authorization Server Issuer Identification、[RFC 9207](https://www.rfc-editor.org/rfc/rfc9207)）→ Kong は受け取り側でこれを検証して mix-up 攻撃を防ぐ
+- **Kong はまだ不関与**（ブラウザがコールバック URL に redirect されただけで、まだ `/protected` を叩いていない）
+
+##### Step 4：Kong がコールバックを受けて token 交換 → upstream へフォワード
+
+**ユーザー側のコマンド**（callback URL を Kong に渡す）:
+
+```bash
+# 仮に Step 3 の callback URL を $CALLBACK に保存していたとして:
+curl -i -s -o /tmp/upstream.json -D - \
+  -b "authorization=<Step 1 で取得した Kong Cookie の値>" \
+  "$CALLBACK"
+```
+
+**期待する出力**:
+
+```text
+HTTP/1.1 200 OK
+Set-Cookie: kong_rp_session=...; HttpOnly; SameSite=Lax    ← Kong がセッションを確立
+Content-Type: application/json
+```
+
+`/tmp/upstream.json` を `jq` で確認:
+
+```bash
+jq '.headers | with_entries(select(.key | ascii_downcase | startswith("x-userinfo")))' /tmp/upstream.json
+# {
+#   "X-Userinfo-Sub":      "11111111-1111-4111-8111-111111111111",
+#   "X-Userinfo-Username": "alice",
+#   "X-Userinfo-Groups":   "fapi2-users"
+# }
+```
+
+**Kong が back-channel で行ったこと（時系列）**:
+
+1. ブラウザから受け取った `authorization` Cookie を復号 → `code_verifier`・`state`・`nonce` を取り出す
+2. コールバック URL の `state` クレームと Cookie の値を **照合**（CSRF 対策）
+3. コールバック URL の `iss` クレームを **照合**（mix-up 攻撃対策、RFC 9207）
+4. **新しい `client_assertion` を生成**（一回ごとに署名する仕様、`jti` も毎回ユニーク）
+5. **Keycloak の token endpoint** `POST /realms/fapi2/protocol/openid-connect/token` を叩く（body：`grant_type=authorization_code`、`code=<受け取った認可コード>`、`code_verifier=<Step 1 で生成したもの>`、`client_assertion_type=...:jwt-bearer`、`client_assertion=<新規 JWT>`）
+6. レスポンスから `access_token` / `id_token` / `refresh_token` を受け取り、ID Token の署名・`iss`・`aud`・`exp`・`nonce` を検証
+7. UserInfo エンドポイントを叩いてユーザー情報を取得（または ID Token から claim を抽出）
+8. セッション Cookie（`kong_rp_session`）を発行して暗号化トークンを格納
+9. **同一トランザクション内で** httpbin（upstream）にリクエストをフォワード（`x-userinfo-*` ヘッダーを付加）
+10. httpbin の echo レスポンスをそのままブラウザに返す（302 redirect は挟まない）
+
+**ログで観察できるもの**:
+
+```text
+# docker compose logs kong（info レベル）
+"GET /protected?state=...&code=... HTTP/1.1" 200 ...    ← Kong access log（200 で完了）
+```
+
+token endpoint への内部 POST、`client_assertion` の検証、`access_token` の取得は info レベルでは出ない。`KONG_LOG_LEVEL=debug` を有効にすると、`grant_type=authorization_code` の token request 全文（PII を除く）と access_token / id_token のメタデータが出る。Keycloak access log を有効にしていれば次のような時系列が見える:
+
+```text
+172.25.0.x - "POST /realms/fapi2/protocol/openid-connect/ext/par/request HTTP/1.1" 201   ← Step 1: Kong からの PAR
+172.25.0.1 - "GET  /realms/fapi2/protocol/openid-connect/auth?... HTTP/1.1" 200          ← Step 2: ブラウザからの authorize
+172.25.0.1 - "POST /realms/fapi2/login-actions/authenticate?... HTTP/1.1" 302            ← Step 3: ブラウザからのログイン送信
+172.25.0.x - "POST /realms/fapi2/protocol/openid-connect/token HTTP/1.1" 200             ← Step 4: Kong からの token 交換
+```
+
+**ポイント**: PAR と token は **Kong コンテナ IP（172.25.0.x）** から、authorize と login は **ブラウザ IP（host bridge の 172.25.0.1）** から来ている。これが「**ブラウザ通過は最小限、機密情報はサーバー間 back-channel**」という FAPI 2.0 の設計を体現している。
 
 #### 検証 2 ブラウザでの手動確認
 
