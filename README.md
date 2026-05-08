@@ -70,17 +70,16 @@ Kong Gateway を使った FAPI 2.0の検証
       - [検証 2（Kong = RP）の補足](#検証-2kong--rpの補足)
         - [Kong の openid-connect プラグインの限界（FAPI 2.0 RP として）](#kong-の-openid-connect-プラグインの限界fapi-20-rp-として)
       - [検証 3（Kong = RP × mTLS）の補足](#検証-3kong--rp--mtlsの補足)
-    - [Kong を RS として使う場合のフロー](#kong-を-rs-として使う場合のフロー)
-    - [Kong を RP として使う場合のフロー](#kong-を-rp-として使う場合のフロー)
-      - [シーケンス図](#シーケンス図)
-      - [openid-connect プラグインの RP モード設定例](#openid-connect-プラグインの-rp-モード設定例)
-      - [適しているシナリオ](#適しているシナリオ)
-      - [運用上の注意点](#運用上の注意点)
+    - [各構成のフロー（実装ベース）](#各構成のフロー実装ベース)
+    - [openid-connect プラグインの RP モード設定例](#openid-connect-プラグインの-rp-モード設定例)
+    - [適しているシナリオ](#適しているシナリオ)
+    - [運用上の注意点](#運用上の注意点)
   - [openid-connect プラグインの FAPI 対応機能](#openid-connect-プラグインの-fapi-対応機能)
   - [「FAPI 2.0 対応」と言えるか](#fapi-20-対応と言えるか)
     - [立場別：conformance test との関わり方](#立場別conformance-test-との関わり方)
       - [自社実装する場合の流れ（参考）](#自社実装する場合の流れ参考)
   - [検証 1: Kong = RS](#検証-1-kong--rs)
+    - [検証 1 のフロー（Kong = RS）](#検証-1-のフローkong--rs)
     - [検証 1 の構成](#検証-1-の構成)
     - [検証 1 の環境起動](#検証-1-の環境起動)
       - [1. `.env` ファイルを準備する](#1-env-ファイルを準備する)
@@ -101,6 +100,7 @@ Kong Gateway を使った FAPI 2.0の検証
       - [11. PAR なしで認可エンドポイントに直接アクセスする → Keycloak が拒否することを確認する](#11-par-なしで認可エンドポイントに直接アクセスする--keycloak-が拒否することを確認する)
       - [12. グループ未所属の charlie のトークンで Kong にアクセスする](#12-グループ未所属の-charlie-のトークンで-kong-にアクセスする)
   - [検証 2: Kong = RP](#検証-2-kong--rp)
+    - [検証 2 のフロー（Kong = RP × private_key_jwt）](#検証-2-のフローkong--rp--private_key_jwt)
     - [検証 2 の構成](#検証-2-の構成)
     - [検証 2 の環境起動](#検証-2-の環境起動)
       - [1. Kong に RP 設定を反映する](#1-kong-に-rp-設定を反映する)
@@ -114,6 +114,8 @@ Kong Gateway を使った FAPI 2.0の検証
       - [4. Cookie を確認する](#4-cookie-を確認する)
       - [5. ログアウト](#5-ログアウト)
   - [検証 3: Kong = RP × mTLS](#検証-3-kong--rp--mtls)
+    - [検証 3 のフロー（Kong = RP × mTLS + JAR）](#検証-3-のフローkong--rp--mtls--jar)
+    - [mTLS の適用範囲（どこと、どこの間？）](#mtls-の適用範囲どことどこの間)
     - [検証 3 の構成](#検証-3-の構成)
     - [検証 3 の環境起動](#検証-3-の環境起動)
       - [1. Kong に mTLS 用 RP 設定を反映する](#1-kong-に-mtls-用-rp-設定を反映する)
@@ -1051,136 +1053,19 @@ Kong Gateway は `openid-connect` プラグインの設定次第で **RS** に�
 >
 > なお JARM（signed authorization responses）は検証 2 と同様の Kong RP 側制約により未使用、Signed Introspection Responses は本 PoC のアーキテクチャ（Kong は token endpoint から直接トークンを受領、introspection 経路を持たない）の対象外である。
 
-#### Kong を RS として使う場合のフロー
+#### 各構成のフロー（実装ベース）
 
-ここからは Kong = RS 構成（本リポジトリで採用）のフルフローを示す。RP（curl スクリプトが模す Backend/BFF）と AS（Keycloak）が PAR/JAR/PKCE/JARM/DPoP を交わしてトークンを取得し、最終フェーズの API 呼び出しで Kong が DPoP 検証を実施する。**太枠で囲まれた部分が Kong Gateway の担当範囲** である。
+Kong が RS / RP として果たす役割は、本リポジトリの 3 つの検証構成それぞれで具体的なシーケンス図として詳述している。役割の理解は構成ごとの実フローと一緒に追う方が早いので、フルフローはそれぞれの検証セクションを参照してほしい。
 
-```mermaid
-sequenceDiagram
-    participant RO as リソースオーナー<br>（例：利用者）
-    participant B as ブラウザ<br>（User-Agent）
-    participant C as RP<br>（例：BFF/Backend）
-    participant AS as 認可サーバー<br>（Keycloak）
-    participant KG as ≪Kong Gateway≫<br>リソースサーバー（RS）
-    participant API as バックエンド API
+| 構成 | Kong の関与範囲 | フロー図の場所 |
+| --- | --- | --- |
+| **RS（Kong がリソース保護のみ担当）** | フェーズ 4（API 呼び出し時の DPoP 検証）のみ | [検証 1 のフロー](#検証-1-のフローkong--rs) |
+| **RP × `private_key_jwt`（Kong が OIDC 終端）** | フェーズ 1〜4 の全工程に介在（JARM / DPoP は Kong プラグインの制約で未実装） | [検証 2 のフロー](#検証-2-のフローkong--rp--private_key_jwt) |
+| **RP × `mTLS`（sender-constrained token を mTLS 方式で取得）** | RP × `private_key_jwt` と同じ範囲 + Kong → Keycloak 間が mTLS で `cnf.x5t#S256` 付きトークンを取得 | [検証 3 のフロー](#検証-3-のフローkong--rp--mtls--jar) |
 
-    RO->>C: リソースへのアクセスを要求
+OAuth 非対応のレガシー Backend を FAPI 2.0 の保護下に置きたい場合や、PoC として Kong プラグインの設定だけで FAPI 2.0 フローを動かしたい場合に Kong RP 構成は有効である。次の小節では、その RP モード設定の **理論上の最大構成** を示す（DPoP / JARM を含む。実際に動かせる範囲は検証 2 / 3 を参照）。
 
-    note over RO,API: ── フェーズ 1: 認可リクエスト（PAR + JAR + PKCE） ── ※Kong は不関与
-
-    note over C: 【PKCE】code_verifier 生成<br>【JAR】認可パラメータを JWT として署名
-    C->>AS: POST /par（private_key_jwt 認証）<br>request=＜署名済み JAR＞
-    note over AS: JAR 署名検証・code_challenge 保存
-    AS-->>C: { request_uri }
-    C->>B: リダイレクト（request_uri のみ）
-    B->>AS: GET /authorize?client_id=...&request_uri=urn:...
-    AS->>B: ログイン・同意画面
-    RO->>B: 認証・同意
-    B->>AS: 送信
-
-    note over RO,API: ── フェーズ 2: 認可レスポンス（JARM） ── ※Kong は不関与
-
-    note over AS: 【JARM】response JWT を署名
-    AS->>B: リダイレクト ?response=＜署名済み JWT＞
-    B->>C: response=＜署名済み JWT＞
-    note over C: JARM JWT 検証（署名・iss・aud・exp・state）
-
-    note over RO,API: ── フェーズ 3: トークンリクエスト（PKCE + DPoP） ── ※Kong は不関与
-
-    note over C: 【DPoP】Proof JWT 生成（公開鍵埋め込み）
-    C->>AS: POST /token（code + code_verifier + DPoP Proof）
-    note over AS: code_verifier 検証・DPoP 検証<br>cnf.jkt をトークンに埋め込む
-    AS-->>C: access_token（cnf.jkt 付き）
-
-    note over RO,API: ── フェーズ 4: リソースアクセス ── ※ここから Kong Gateway が担当
-
-    note over C: 【DPoP】Proof JWT 再生成（ath = access_token のハッシュ）
-    C->>KG: GET /resource<br>Authorization: DPoP ＜access_token＞<br>DPoP: ＜Proof JWT＞
-
-    rect rgb(220, 240, 255)
-        note over KG: 【Kong が実施する検証】<br>① access_token の署名・有効期限・スコープ検証<br>　（Keycloak JWKS または introspection を使用）<br>② DPoP Proof の署名を公開鍵で検証<br>③ Proof の公開鍵の JWK Thumbprint を計算<br>④ access_token の cnf.jkt と一致するか確認<br>⑤ ath が access_token のハッシュと一致するか確認<br>⑥ 全検証パス → バックエンドにリクエストを転送
-        KG->>API: GET /resource（転送）
-        API-->>KG: レスポンス
-    end
-
-    KG-->>C: 保護されたリソース
-    C-->>RO: リソースを表示
-```
-
-#### Kong を RP として使う場合のフロー
-
-次に、Kong を RP として配置する構成を見ていく。この構成では Kong が「ブラウザを終端する OIDC RP」となり、PAR / JAR / PKCE / private_key_jwt / DPoP / JARM などを Kong プラグインが肩代わりする想定である。Backend は OIDC を一切意識せず、Kong から渡されるユーザー情報（ヘッダー経由）だけを見て業務処理を行えばよい。
-
-> **注意**: 以下のシーケンス図と YAML 設定例は **「FAPI 2.0 + Message Signing をすべて RP に取り込んだ最大構成」** を示すための理論モデルである。本リポジトリの[検証 2](#検証-2-kong--rp) で実証したところ、Kong の `openid-connect` プラグインの現バージョンでは **DPoP の RP 側生成と JARM の RP 側受信が未実装** のため、図中の DPoP / JARM 部分は **実際には Kong だけでは完結しない**（詳細は[検証 2 の補足](#検証-2kong--rpの補足)）。完結する範囲（PAR + JAR + private_key_jwt + PKCE）が[検証 2](#検証-2-kong--rp)、sender-constrained を mTLS 経路で実現したのが[検証 3](#検証-3-kong--rp--mtls) である。
-
-OAuth 非対応のレガシー Backend を FAPI 2.0 の保護下に置きたい場合や、PoC として Kong プラグインの設定だけで FAPI 2.0 フローを動かしたい場合に有効な構成である。
-
-##### シーケンス図
-
-太枠で囲まれた部分が Kong Gateway の担当範囲である。RS 構成と比較すると Kong が **すべてのフェーズに関与する** 点が大きく異なる。
-
-```mermaid
-sequenceDiagram
-    participant RO as リソースオーナー<br>（例：利用者）
-    participant B as ブラウザ<br>（User-Agent）
-    participant KG as ≪Kong Gateway≫<br>RP モード
-    participant AS as 認可サーバー<br>（Keycloak）
-    participant API as バックエンド API<br>（OAuth 非対応でも可）
-
-    RO->>B: アプリケーションにアクセス
-    B->>KG: GET /protected
-    note over KG: セッション Cookie がない<br>→ OIDC フロー開始
-
-    rect rgb(220, 240, 255)
-        note over RO,API: ── フェーズ 1: 認可リクエスト（PAR + JAR + PKCE） ──
-
-        note over KG: 【PKCE】code_verifier 生成<br>【PKCE】code_challenge = BASE64URL(SHA256(code_verifier))<br>【JAR】認可パラメータを秘密鍵で JWT 署名<br>　（client_id, redirect_uri, scope, state,<br>　 code_challenge, response_mode=jwt を含む）
-        KG->>AS: POST /par（クライアント認証: private_key_jwt）<br>request=＜署名済み JAR＞
-        note over AS: 【JAR】Request Object の署名を検証<br>【PKCE】code_challenge を保存
-        AS-->>KG: { request_uri, expires_in }
-        KG->>B: 302 リダイレクト<br>Location: /authorize?client_id=...&request_uri=urn:...
-    end
-
-    B->>AS: GET /authorize?client_id=...&request_uri=urn:...
-    AS->>B: ログイン・同意画面
-    B->>RO: 表示
-    RO->>B: 認証情報を入力・同意
-    B->>AS: 認証・同意を送信
-
-    rect rgb(220, 240, 255)
-        note over RO,API: ── フェーズ 2: 認可レスポンス（JARM） ──
-
-        note over AS: 【JARM】{ code, state, iss, exp } を JWT として署名
-        AS->>B: 302 リダイレクト Kong コールバック<br>Location: /callback?response=＜署名済み JWT＞
-        B->>KG: GET /callback?response=＜署名済み JWT＞
-        note over KG: 【JARM】JWT を検証<br>（署名・iss・aud・exp・state）<br>code を取り出す
-
-        note over RO,API: ── フェーズ 3: トークンリクエスト（PKCE + DPoP） ──
-
-        note over KG: 【DPoP】Proof JWT を生成<br>ヘッダーに公開鍵（jwk）を埋め込み<br>htm=POST, htu=/token, iat, jti を設定し秘密鍵で署名
-        KG->>AS: POST /token（クライアント認証: private_key_jwt）<br>code, code_verifier, DPoP: ＜Proof JWT＞
-        note over AS: 【PKCE】SHA256(code_verifier) == 保存済み code_challenge を検証<br>【DPoP】Proof JWT を検証し公開鍵の JWK Thumbprint を計算<br>access_token の cnf.jkt に埋め込む
-        AS-->>KG: access_token（cnf.jkt = 公開鍵のフィンガープリント）
-
-        note over KG: ・access_token をセッションに保存<br>・セッション Cookie をブラウザに発行
-        KG->>B: 302 リダイレクト 当初の /protected へ<br>Set-Cookie: session=...
-    end
-
-    B->>KG: GET /protected（Cookie: session=...）
-
-    rect rgb(220, 240, 255)
-        note over RO,API: ── フェーズ 4: バックエンド呼び出し ──
-
-        note over KG: ・セッションから access_token を取り出す<br>・必要に応じて DPoP Proof を再生成<br>　（htm=GET, htu=/protected, ath=access_token のハッシュ）<br>・ユーザー情報をヘッダー（X-Userinfo 等）に埋めて転送
-        KG->>API: GET /protected<br>X-Userinfo: ＜ユーザー情報 JWT＞
-        API-->>KG: レスポンス
-    end
-
-    KG-->>B: レスポンス
-    B-->>RO: 表示
-```
-
-##### openid-connect プラグインの RP モード設定例
+#### openid-connect プラグインの RP モード設定例
 
 以下は Kong を RP モードで動作させる場合の `deck.yaml` のプラグイン設定例（説明用の抜粋）である。本リポジトリでは [`deck/rp.yaml`](deck/rp.yaml) として実装済みで、`scripts/rp_e2e_verify.py` で検証できる。実際の手順は「[検証 2: Kong = RP](#検証-2-kong--rp)」を参照。
 
@@ -1274,14 +1159,14 @@ plugins:
 
 > **注意**: 上記の設定キー名は `openid-connect` プラグインのバージョンによって細部が異なる場合がある。実際に投入する前に [Kong 公式リファレンス](https://developer.konghq.com/plugins/openid-connect/reference/) で対象バージョンの正確なキー名・型を確認すること。
 
-##### 適しているシナリオ
+#### 適しているシナリオ
 
 - **OAuth 非対応のレガシー Backend を FAPI 2.0 化したい**: Backend は無改修で、Kong から渡されるユーザー情報ヘッダーだけ見ればよい
 - **複数の Backend を統合する集約点**: 認証・認可を Kong に集中させ、各 Backend は業務ロジックに専念
 - **PoC・デモ**: Kong プラグインの設定だけで FAPI 2.0 フローが動くため、Backend を作り込まずに検証可能
 - **BFF を別途立てるほどではない小規模構成**: Kong を BFF 代わりに使うことで、コンポーネント数を抑える
 
-##### 運用上の注意点
+#### 運用上の注意点
 
 - **セッションストアの可用性**: `session_storage: cookie` はステートレスだが、Cookie サイズ制限と暗号鍵管理が必要。`redis` 等を使う場合は Redis 自体の可用性設計が必要
 - **Cookie 属性**: `Secure` `HttpOnly` `SameSite` を適切に設定。CSRF 対策・トークン漏洩防止の最後の砦になる
@@ -1346,6 +1231,62 @@ Kong Gateway の `openid-connect` プラグインを **RS モード** で設定�
 **なお、以下の手順はクライアント認証に `client_secret_post` を使っており、FAPI 2.0 が要求する `private_key_jwt` または mTLS を使っていない**。PAR・PKCE・DPoP・Kong の受け入れ挙動を確認するための簡易検証であり、FAPI 2.0 準拠構成の実証ではない。`private_key_jwt` まで含めた構成は「[検証 2: Kong = RP](#検証-2-kong--rp)」を参照。
 
 > 実装中に踏んだ注意点（Docker メモリ割り当て、Keycloak 内外 URL 統一、Python `requests` の `.localhost` Cookie 問題 など）は「[付録 - 検証中に判明した注意点](#付録---検証中に判明した注意点)」にまとめている。
+
+#### 検証 1 のフロー（Kong = RS）
+
+検証 1 では RP（curl/Python スクリプトが模す Backend/BFF）と AS（Keycloak）が PAR / JAR / PKCE / JARM / DPoP を交わしてトークンを取得し、最終フェーズの API 呼び出しで Kong が DPoP 検証を実施する。**太枠で囲まれた部分が Kong Gateway の担当範囲** である。Kong は **フェーズ 4（リソースアクセス）でのみ介在** する。
+
+```mermaid
+sequenceDiagram
+    participant RO as リソースオーナー<br>（例：利用者）
+    participant B as ブラウザ<br>（User-Agent）
+    participant C as RP<br>（例：BFF/Backend）
+    participant AS as 認可サーバー<br>（Keycloak）
+    participant KG as ≪Kong Gateway≫<br>リソースサーバー（RS）
+    participant API as バックエンド API
+
+    RO->>C: リソースへのアクセスを要求
+
+    note over RO,API: ── フェーズ 1: 認可リクエスト（PAR + JAR + PKCE） ── ※Kong は不関与
+
+    note over C: 【PKCE】code_verifier 生成<br>【JAR】認可パラメータを JWT として署名
+    C->>AS: POST /par（client_secret_post 認証）<br>request=＜署名済み JAR＞
+    note over AS: JAR 署名検証・code_challenge 保存
+    AS-->>C: { request_uri }
+    C->>B: リダイレクト（request_uri のみ）
+    B->>AS: GET /authorize?client_id=...&request_uri=urn:...
+    AS->>B: ログイン・同意画面
+    RO->>B: 認証・同意
+    B->>AS: 送信
+
+    note over RO,API: ── フェーズ 2: 認可レスポンス ── ※Kong は不関与
+
+    AS->>B: リダイレクト ?code=...&state=...
+    B->>C: code を渡す
+
+    note over RO,API: ── フェーズ 3: トークンリクエスト（PKCE + DPoP） ── ※Kong は不関与
+
+    note over C: 【DPoP】Proof JWT 生成（公開鍵埋め込み）
+    C->>AS: POST /token（code + code_verifier + DPoP Proof）
+    note over AS: code_verifier 検証・DPoP 検証<br>cnf.jkt をトークンに埋め込む
+    AS-->>C: access_token（cnf.jkt 付き）
+
+    note over RO,API: ── フェーズ 4: リソースアクセス ── ※ここから Kong Gateway が担当
+
+    note over C: 【DPoP】Proof JWT 再生成（ath = access_token のハッシュ）
+    C->>KG: GET /resource<br>Authorization: DPoP ＜access_token＞<br>DPoP: ＜Proof JWT＞
+
+    rect rgb(220, 240, 255)
+        note over KG: 【Kong が実施する検証】<br>① access_token の署名・有効期限・スコープ検証<br>　（Keycloak introspection を使用）<br>② DPoP Proof の署名を公開鍵で検証<br>③ Proof の公開鍵の JWK Thumbprint を計算<br>④ access_token の cnf.jkt と一致するか確認<br>⑤ ath が access_token のハッシュと一致するか確認<br>⑥ 全検証パス → バックエンドにリクエストを転送
+        KG->>API: GET /resource（転送）
+        API-->>KG: レスポンス
+    end
+
+    KG-->>C: 保護されたリソース
+    C-->>RO: リソースを表示
+```
+
+> **注意**: 検証 1 は本リポジトリの簡略化として、RP→AS のクライアント認証に `client_secret_post`、RP→AS の認可レスポンス受領は plain `code`（非 JARM）で実施している。これは Kong の RS としての受け入れ挙動を見るためのテストハーネスであり、RP 側の FAPI 準拠は問題視していない。Kong が RP として `private_key_jwt`・JAR まで本当に実行できることは [検証 2](#検証-2-kong--rp) で確認する。
 
 #### 検証 1 の構成
 
@@ -1797,6 +1738,73 @@ curl -i http://localhost:8000/anything \
 
 > 実装中に踏んだ注意点（YAML 1.1 の `n:` boolean 衝突、`jwks_endpoint` キー名、DPoP / JARM の RP 側未対応 など）は「[付録 - 検証中に判明した注意点](#付録---検証中に判明した注意点)」にまとめている。
 
+#### 検証 2 のフロー（Kong = RP × private_key_jwt）
+
+検証 1 と異なり、**Kong がすべてのフェーズに関与する**。ブラウザは Kong しか見えず、Kong が PAR / JAR / private_key_jwt / トークン取得 / セッション管理を肩代わりする。Backend（httpbin）は OAuth/OIDC を一切意識せず、Kong から渡される `x-userinfo-*` ヘッダーだけを受け取ればよい。
+
+> **注意**: 以下のフローは **Kong が現バージョンで実際に動かせる範囲** で描いている。FAPI 2.0 + Message Signing の最大構成（JARM・DPoP の RP 側生成）は Kong の `openid-connect` プラグインでは未実装のため、本検証では：
+>
+> - **JARM 不採用**：認可レスポンスは plain `code`（`?code=...&state=...&iss=...`）で受信する
+> - **DPoP 不採用**：access_token は sender-constrained でない（`cnf` クレームなし）
+>
+> sender-constrained token を Kong RP で実現するルートは [検証 3: Kong = RP × mTLS](#検証-3-kong--rp--mtls) を参照。
+
+```mermaid
+sequenceDiagram
+    participant RO as リソースオーナー<br>（例：利用者）
+    participant B as ブラウザ<br>（User-Agent）
+    participant KG as ≪Kong Gateway≫<br>RP モード
+    participant AS as 認可サーバー<br>（Keycloak）
+    participant API as バックエンド API<br>（OAuth 非対応でも可）
+
+    RO->>B: アプリケーションにアクセス
+    B->>KG: GET /protected
+    note over KG: セッション Cookie がない<br>→ OIDC フロー開始
+
+    rect rgb(220, 240, 255)
+        note over RO,API: ── フェーズ 1: 認可リクエスト（PAR + JAR + PKCE） ──
+
+        note over KG: 【PKCE】code_verifier 生成<br>【PKCE】code_challenge = BASE64URL(SHA256(code_verifier))<br>【JAR】認可パラメータを PS256 client_jwk で JWT 署名<br>　（client_id, redirect_uri, scope, state,<br>　 code_challenge を含む）
+        KG->>AS: POST /par（クライアント認証: private_key_jwt）<br>request=＜署名済み JAR＞
+        note over AS: 【private_key_jwt】client_assertion を検証<br>【JAR】Request Object 署名を JWKS で検証<br>【PKCE】code_challenge を保存
+        AS-->>KG: { request_uri, expires_in }
+        KG->>B: 302 リダイレクト<br>Location: /authorize?client_id=...&request_uri=urn:...
+    end
+
+    B->>AS: GET /authorize?client_id=...&request_uri=urn:...
+    AS->>B: ログイン・同意画面
+    B->>RO: 表示
+    RO->>B: 認証情報を入力・同意
+    B->>AS: 認証・同意を送信
+
+    rect rgb(220, 240, 255)
+        note over RO,API: ── フェーズ 2: 認可レスポンス（plain code、JARM 不採用） ──
+
+        AS->>B: 302 リダイレクト Kong コールバック<br>Location: /protected?code=...&state=...&iss=...
+        B->>KG: GET /protected?code=...&state=...&iss=...
+        note over KG: state を `authorization` Cookie と照合<br>iss を期待値と照合
+
+        note over RO,API: ── フェーズ 3: トークンリクエスト ──
+
+        KG->>AS: POST /token（クライアント認証: private_key_jwt）<br>code, code_verifier
+        note over AS: 【private_key_jwt】client_assertion を検証<br>【PKCE】SHA256(code_verifier) == 保存済み code_challenge を検証<br>access_token を発行（DPoP/mTLS バインドなし）
+        AS-->>KG: access_token（cnf 無し、bearer 相当）
+
+        note over KG: ・access_token をセッションに保存<br>・セッション Cookie をブラウザに発行
+    end
+
+    rect rgb(220, 240, 255)
+        note over RO,API: ── フェーズ 4: バックエンド呼び出し（同一トランザクション内で透過） ──
+
+        note over KG: ・セッション内 access_token を Bearer に変換<br>・ユーザー情報をヘッダー（X-Userinfo-*）に埋めて転送
+        KG->>API: GET /protected<br>Authorization: Bearer ＜access_token＞<br>X-Userinfo-Sub / Username / Groups
+        API-->>KG: レスポンス
+    end
+
+    KG->>B: 200 OK + Set-Cookie: kong_rp_session=...
+    B-->>RO: 表示
+```
+
 #### 検証 2 の構成
 
 | コンポーネント | ホスト（外部） | ホスト（コンテナ内部） | 役割 |
@@ -2083,6 +2091,68 @@ http://localhost:8000/protected/logout
 検証 3 では **検証 2 で到達できなかった sender-constrained access token** を **mTLS 方式（RFC 8705）** で実現する。Kong は Keycloak の HTTPS（mTLS）エンドポイントに対してクライアント証明書を提示し、Keycloak はその証明書の SHA-256 thumbprint を `cnf.x5t#S256` クレームに埋め込んでアクセストークンを発行する。FAPI 2.0 Security Profile が sender-constrained token として認める「DPoP **または** mTLS」のうち、Kong の `openid-connect` プラグインで実装できるのは mTLS 方式である。
 
 > 実装中に踏んだ注意点（Certificate エンティティの UUID 要件、`KC_TRUSTSTORE_PATHS` への切替、`KONG_LUA_SSL_TRUSTED_CERTIFICATE`、`x509.subjectdn` の正規表現マッチ、JWKS キャッシュ問題 など）は「[付録 - 検証中に判明した注意点](#付録---検証中に判明した注意点)」にまとめている。
+
+#### 検証 3 のフロー（Kong = RP × mTLS + JAR）
+
+検証 2 との違いは **クライアント認証が `private_key_jwt` ではなく `tls_client_auth`** であり、結果として AS が発行する access_token に **`cnf.x5t#S256`（クライアント証明書の SHA-256 thumbprint）が埋め込まれて sender-constrained になる** こと。`tls_client_auth` は TLS ハンドシェイク層のクライアント認証なので、Kong → Keycloak の PAR / token エンドポイント呼び出しは **HTTPS:9443（mTLS 専用、`mtls_endpoint_aliases` 経路）** に切り替わる。
+
+JAR は別レイヤーとして残る — `tls_client_auth` は Request Object の署名鍵を提供しないため、検証 3 では mTLS 用 X.509 証明書とは **独立した PS256 `client_jwk`** を deck に投入し、対応する公開 JWK を Keycloak の `kong-rp-mtls-client` に登録している。
+
+```mermaid
+sequenceDiagram
+    participant RO as リソースオーナー<br>（例：利用者）
+    participant B as ブラウザ<br>（User-Agent）
+    participant KG as ≪Kong Gateway≫<br>RP モード（mTLS クライアント）
+    participant AS as 認可サーバー<br>（Keycloak）<br>HTTPS:9443 mTLS 受け
+    participant API as バックエンド API
+
+    RO->>B: アプリケーションにアクセス
+    B->>KG: GET /protected-mtls (HTTP)
+    note over KG: セッション Cookie がない<br>→ OIDC フロー開始
+
+    rect rgb(220, 240, 255)
+        note over RO,API: ── フェーズ 1: PAR + JAR + PKCE（Kong → Keycloak は mTLS） ──
+
+        note over KG: 【PKCE】code_verifier 生成<br>【JAR】認可パラメータを PS256 client_jwk で署名<br>※ JAR 用鍵は mTLS クライアント証明書と別物
+        KG-)AS: POST https://keycloak:9443/.../ext/par/request<br>(TLS ハンドシェイクで X.509 クライアント証明書を提示)<br>request=＜署名済み JAR＞
+        note over AS: 【tls_client_auth】TLS 層で X.509 証明書の Subject DN を検証<br>【JAR】Request Object 署名を JWKS（kong-rp-mtls-client）で検証<br>【PKCE】code_challenge を保存
+        AS-->>KG: { request_uri, expires_in }
+        KG->>B: 302 リダイレクト Location: http://keycloak:9080/.../authorize?request_uri=urn:...
+    end
+
+    B->>AS: GET /authorize?request_uri=urn:... (HTTP:9080)
+    AS->>B: ログイン画面
+    RO->>B: 認証情報を入力・同意
+    B->>AS: 送信
+
+    rect rgb(220, 240, 255)
+        note over RO,API: ── フェーズ 2: 認可レスポンス（plain code、JARM 不採用） ──
+
+        AS->>B: 302 Location: /protected-mtls?code=...&state=...&iss=...
+        B->>KG: GET /protected-mtls?code=...&state=...
+
+        note over RO,API: ── フェーズ 3: トークンリクエスト（mTLS で sender-constrained token を取得） ──
+
+        KG-)AS: POST https://keycloak:9443/.../token<br>(TLS ハンドシェイクで X.509 クライアント証明書を提示)<br>code, code_verifier
+        note over AS: 【tls_client_auth】TLS 層で X.509 証明書の Subject DN を検証<br>【PKCE】code_verifier を検証<br>★ クライアント証明書の SHA-256 thumbprint を計算し、<br>★ access_token の cnf.x5t#S256 クレームに埋め込む（RFC 8705 §3）
+        AS-->>KG: access_token（cnf.x5t#S256 = 証明書 thumbprint 付き）
+
+        note over KG: ・access_token をセッションに保存<br>・セッション Cookie をブラウザに発行
+    end
+
+    rect rgb(220, 240, 255)
+        note over RO,API: ── フェーズ 4: バックエンド呼び出し ──
+
+        note over KG: ・access_token を Bearer に変換<br>・ユーザー情報を X-Userinfo-* ヘッダーに付加
+        KG->>API: GET /anything<br>Authorization: Bearer ＜cnf.x5t#S256 付き access_token＞<br>X-Userinfo-Sub / Username / Groups
+        API-->>KG: レスポンス
+    end
+
+    KG->>B: 200 OK + Set-Cookie: kong_rp_mtls_session=...
+    B-->>RO: 表示
+```
+
+> **mTLS が効いている区間（実線矢印 `-)` で表現）** は **Kong ↔ Keycloak の PAR / token endpoint 呼び出しだけ**。ブラウザ ↔ Kong、Kong ↔ Backend は平文 HTTP のままで、ユーザー側に証明書負担はない。詳細は次節で図示する。
 
 #### mTLS の適用範囲（どこと、どこの間？）
 
