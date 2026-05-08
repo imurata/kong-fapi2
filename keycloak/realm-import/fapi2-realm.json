@@ -100,6 +100,133 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "kong-rp-mtls-client",
+      "name": "Kong Gateway as FAPI 2.0 RP (mTLS sender-constrained)",
+      "description": "Kong openid-connect plugin acting as a FAPI 2.0 Confidential Client using mTLS client authentication (RFC 8705) for sender-constrained access tokens.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-x509",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "frontchannelLogout": true,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost:8000/*",
+        "http://127.0.0.1:8000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+      ],
+      "attributes": {
+        "x509.subjectdn": ".*CN=kong-rp-mtls-client.*",
+        "x509.allow.regex.pattern.comparison": "true",
+        "tls.client.certificate.bound.access.tokens": "true",
+        "pkce.code.challenge.method": "S256",
+        "require.pushed.authorization.requests": "true",
+        "request.object.signature.alg": "PS256",
+        "request.object.required": "request",
+        "request.uris": "",
+        "access.token.signed.response.alg": "PS256",
+        "id.token.signed.response.alg": "PS256"
+      },
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles",
+        "web-origins"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "claim.name": "groups",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "kong-rp-client",
+      "name": "Kong Gateway as FAPI 2.0 RP",
+      "description": "Kong openid-connect plugin acting as a FAPI 2.0 Confidential Client (private_key_jwt + PAR + JAR + JARM + DPoP)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-jwt",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "frontchannelLogout": true,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost:8000/*",
+        "http://127.0.0.1:8000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+      ],
+      "attributes": {
+        "use.jwks.string": "true",
+        "jwks.string": "{\"keys\":[{\"kty\":\"RSA\",\"use\":\"sig\",\"alg\":\"PS256\",\"kid\":\"kong-rp-key-1\",\"n\":\"kdSGmOIUGh88o-vFei3LFgQCpRRohsrC7q64f1rr1X7Yg8OTIatmIZBil2N4yF6rbwtHmpzE868WuwYDXpvHU_BlkNZ2HTM5JwjCA2zxBa8lJxJ3Aj40viXTUIAtO2d63D-VqVMLTt6ueeSxAXIlC4NuGfmyZ79S9ox79DcT8H6R4zRQBjFBEz5fK8A9WQ0XLNhYDhGeYX_8cy91-r8sCViubydfCEGZGurX0NAPvhlpGF0Sf-36p6KUIirV3WNWLqe1MHMlXzZuLpE9a6eaqipht79OP4EbREZ-Rk49jYgTkSQmizFI5W6EQa9nXRN9-SBcz_x5ccxoMtnn1_gXEQ\",\"e\":\"AQAB\"}]}",
+        "token.endpoint.auth.signing.alg": "PS256",
+        "pkce.code.challenge.method": "S256",
+        "require.pushed.authorization.requests": "true",
+        "request.object.signature.alg": "PS256",
+        "request.object.required": "request",
+        "request.uris": "",
+        "authorization.signed.response.alg": "PS256",
+        "access.token.signed.response.alg": "PS256",
+        "id.token.signed.response.alg": "PS256"
+      },
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles",
+        "web-origins"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "claim.name": "groups",
+            "jsonType.label": "String"
+          }
+        }
+      ]
     }
   ],
   "users": [

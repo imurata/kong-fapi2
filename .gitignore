@@ -7,6 +7,12 @@
 *.p12
 *.pfx
 
+# Exception: kong-rp test key pair is committed deliberately for
+# reproducibility of the RP verification scenario. These are clearly
+# marked as PoC/test keys; do NOT reuse them outside this repo.
+!keys/kong-rp-private.pem
+!keys/kong-rp-public.pem
+
 # Python
 __pycache__/
 *.pyc

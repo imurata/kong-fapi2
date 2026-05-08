@@ -1,0 +1,186 @@
+_format_version: "3.0"
+
+# ============================================================
+# Kong Gateway as FAPI 2.0 Relying Party (mTLS variant)
+# ------------------------------------------------------------
+# This deck file makes Kong terminate the OIDC flow and obtain
+# *certificate-bound* (sender-constrained) access tokens from
+# Keycloak using mTLS client authentication (RFC 8705).
+#
+# Differences from deck/rp.yaml:
+#   - client_auth: tls_client_auth (was: private_key_jwt)
+#   - tls_client_auth_cert_id points to a Kong Certificate entity
+#   - All token / PAR endpoints are HTTPS on port 9443 (mTLS)
+#   - Kong verifies the Keycloak server cert against the same
+#     internal CA (tls_client_auth_ssl_verify: true)
+# ============================================================
+
+certificates:
+  - id: ce451e1b-9c1e-4184-bc22-3e001336e8ed
+    cert: |
+      -----BEGIN CERTIFICATE-----
+      MIIDUDCCAjigAwIBAgIUaQ4FVN6C+udgWPgPTvM8qFHUoPUwDQYJKoZIhvcNAQEL
+      BQAwHDEaMBgGA1UEAwwRS29uZyBGQVBJMiBQb0MgQ0EwHhcNMjYwNTA3MDcxODI5
+      WhcNMjgwODA5MDcxODI5WjA3MRwwGgYDVQQDDBNrb25nLXJwLW10bHMtY2xpZW50
+      MRcwFQYDVQQKDA5Lb25nIEZBUEkyIFBvQzCCASIwDQYJKoZIhvcNAQEBBQADggEP
+      ADCCAQoCggEBAMqTDaTzBJqoNzDj+5QG8ktKIQsUsoruoNcCW/67aU+gbZyUsqtD
+      eK2OpVLmN0sPrAuMTSmIG4J52sT8tGF69Y5u5xZKnvGO4oUy0qTGnVPDs+A1Frvu
+      aPLlEC2zb/UGvSJ8Ma2ntcd/39IT8TYSJ9SqW41LdIG+PHPQIUEElhN3M8gUaXl+
+      ONWbeoQtp/uW9Hhk2LaPcwFx3OR7cJsTYxYeooaYqP7kk38N/mehRAiPgrcIzmSe
+      00ziG+khGkFmG7TP9s+cu7gSW6Wd1Cp8puaDN4tdu+fvKViu1ALxhoEKpFKaFl2v
+      b6dquVk7fYJegUgPp0PpcQFilAWLhxTfR1kCAwEAAaNvMG0wCQYDVR0TBAIwADAL
+      BgNVHQ8EBAMCBaAwEwYDVR0lBAwwCgYIKwYBBQUHAwIwHQYDVR0OBBYEFOGyO6Z7
+      rSPvdegWbpAl1UGe7xOHMB8GA1UdIwQYMBaAFMtE56W2QW7nIpZ/0Z2/j9zfkhpf
+      MA0GCSqGSIb3DQEBCwUAA4IBAQCX9dmt/DoQfIaxgzAffaB8qyT4X3L119wreszr
+      cvlVUr71kexVZ7Cdz7S6Tji7Lgz7JZh9q+9+aWKqN80jBFMguV7LoCUCzPTJzgsY
+      FGGqClwV5s3kALUQmyov3VrEfEoBWEKZIRuQjl8XYWCaBwIhe/5eO+2LxDGkii0/
+      iXxmh5KGkg4/72XnCJqyq6+LC2YoxrwKOs7LUsqOvwFigGsOLCyjRl/8JxNF9hm0
+      fXEwtjxanHkzWY3x/fJ7pZ5qKeYMHUrerhq5oiKK3+7sWEL2juuVk3/0b8OuLNmy
+      23cRv7DeRiDGcqGMBBKICoFx7mQIb3mpu4pu5EDEPKNkGSPd
+      -----END CERTIFICATE-----
+    key: |
+      -----BEGIN PRIVATE KEY-----
+      MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDKkw2k8wSaqDcw
+      4/uUBvJLSiELFLKK7qDXAlv+u2lPoG2clLKrQ3itjqVS5jdLD6wLjE0piBuCedrE
+      /LRhevWObucWSp7xjuKFMtKkxp1Tw7PgNRa77mjy5RAts2/1Br0ifDGtp7XHf9/S
+      E/E2EifUqluNS3SBvjxz0CFBBJYTdzPIFGl5fjjVm3qELaf7lvR4ZNi2j3MBcdzk
+      e3CbE2MWHqKGmKj+5JN/Df5noUQIj4K3CM5kntNM4hvpIRpBZhu0z/bPnLu4Elul
+      ndQqfKbmgzeLXbvn7ylYrtQC8YaBCqRSmhZdr2+narlZO32CXoFID6dD6XEBYpQF
+      i4cU30dZAgMBAAECggEAAV75mGR37t9MZWqVlh4/vEbknRXEUh8ex7uQFRm4hHfl
+      8aa2Kh95xygEoMkYFilT/fBhPPKg9n0w0WUG/JdcuHPJVYED90d3dwCWary1vvdL
+      G7kUn078wqpCwVDKNruAIAMrWRXMq8meOM9N7Ibw7eNDF4rlpTw9AQwEYIIAExy6
+      9CXj0TsIB/WH1+IGp63ezHkaANu31gfuYNgfUUq2ylPJGY6TyyV9PrbghSts0TN3
+      BHkjfLgLf8NhG/RHEKn8kBWwhrxCefkgOzMGMwvpMUqCClryywCf2wo25ekOK3aI
+      +r9GSc8OzRN6mOWiitKjiY6maSOnqBkZKoRFJwQY0QKBgQD9gLq7nX1T7iRGz1ub
+      39KD9rOh26FNH3MpXyg+T6HnLBMUjdaFa+4CBclb0qAF9/Snv6ECN4Bg4sxi4F4v
+      kBuhlFvg1C8O5N/QnF+YuqoYfQgGl5CrfJ1yCQ+tFlZ/kuzuDeqI7om/h1LZ1TiN
+      e8ZC5SPYQiD58Y0aL13WuV4AtQKBgQDMkeUp7u1vKuFAozawTJNrUuTv1ZTqeXO8
+      Jom5YAuyncn7sr16C9kDAXYwRqWIa6JxORzJ5bcc8mtFCnrCe1/pROEUh7LdijtK
+      40PTgX5cm0pcRDDu+MyTxdkdTX3cLtMAge3C2kzzXeYBZ3BYiy+saEUUBXh2J7ER
+      Hot8Z5YmlQKBgDm4N8xEHacgj+33hLpHCh217EysP1vaD1SaMAWQCCMkq+uAKBoU
+      6wpW2vQnTvxM6s3PGg/xJy/oM/VHdOqLe18c8paMeXKAtl0/XZze05/jyBIILI5/
+      PzIZ0hHtBiDiCURissYe2gpb+4dRvyCn0AqnNbQlynBeiWwu4MTlS/wJAoGBAJXg
+      QgRh74Tl5pgju/qYb91OozpvwaW0C64KkhbFnmxjnEsS3i0fpwPDu2KNL9Pt/9py
+      HHxzF6BWn266ycvY9iECfOE8tjgHgX9RWC0Kj5irkWRd9Xfvwnp1lqcYUiDSEXcq
+      uhZrN7uJzOy0ayQD/Y6T6iBMDcCLPfgr58fiYKitAoGBALwEiXy8xWJqtJONfBmP
+      PjnpChqDe1MxGSqcF/8WrRNSBU/P+pakhcDw2zcPRF0U7p6nH1n/mecKLUwPrQnr
+      cbfvs1OC/kaZ18lGRfUt31aGQiBQdV0AgMo+zPnvX4P5XmEvmrGh9sb3u8lQe1uz
+      riUweYuBUaZGfAj8WfMmj2Vv
+      -----END PRIVATE KEY-----
+    tags:
+      - kong-rp-mtls
+
+ca_certificates:
+  - id: 82dc741a-addf-4332-9008-7a7232899af2
+    cert: |
+      -----BEGIN CERTIFICATE-----
+      MIIDGTCCAgGgAwIBAgIUFM0wOgleaMgf0KUH7tF/NLARMjswDQYJKoZIhvcNAQEL
+      BQAwHDEaMBgGA1UEAwwRS29uZyBGQVBJMiBQb0MgQ0EwHhcNMjYwNTA3MDcxODI4
+      WhcNMzYwNTA0MDcxODI4WjAcMRowGAYDVQQDDBFLb25nIEZBUEkyIFBvQyBDQTCC
+      ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALOrpW62/86PPixlb6nd+Aho
+      fAdqrnQ30xLlIj2MdomDUSZS9idbQyC7sUXpEvZ9vYX1nWjwM/toHQWtM95Vo43p
+      t+FPMj4fcAKo0jtMB+hwyzzTGathcmLbVGO+dWEtpt2AsxvJNO8ah/rD4+eS+dTV
+      KGnmoQkRkBoCFeRBDnhY8Sh22AmmnOHAQ7wT3hRv+/tRQ+uEO6TMyU1ONRgLsPDr
+      iqawDbSrMrKUkUfxNLdaE9OpHmVI2C8u1soy10BzSCoqP4AXKBBGWBEVLxnAsdjk
+      TnwcNKdLSCr9YJm9BGD1qKXQ+EXKtNauDUHYMRo9Q71GDQP0QUSyPK0GLghsoJ0C
+      AwEAAaNTMFEwHQYDVR0OBBYEFMtE56W2QW7nIpZ/0Z2/j9zfkhpfMB8GA1UdIwQY
+      MBaAFMtE56W2QW7nIpZ/0Z2/j9zfkhpfMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZI
+      hvcNAQELBQADggEBACkF692K41N2CarvEQ19zEEkBACXPrY55JYOisimUq3D+1cs
+      05JlWQOsl9/mrxBRk5V3h0bQ49Ku2nO2cNyJU9t0Vcdk7NlODXVKJKv6bM+exZeQ
+      FxVQqNrRvIUTYrp/prHbz84ovjlp2rfuwoDGErOxi8VnMWrsXHCy9I2rZmsrirtu
+      aES+eCLqY45b3qHtT3FNo1uQ9JOH8GlQeR27avAA0eRno2pdNdyYQwYwERoT30BM
+      OcA7UDWJ+pVyY6qvGqy7EIv3nJE8VX0wbbaFwiQxJwPohLVGNLXy/CU9eH1GI0Ts
+      6Ve8XWNuT9LP2g+R21A9cjcHtLogrsdEWiJ+f2k=
+      -----END CERTIFICATE-----
+    tags:
+      - fapi2-ca
+
+services:
+  - name: rp-mtls-protected
+    url: http://httpbin/anything
+    plugins:
+      - name: openid-connect
+        config:
+          # ── Issuer (pseudo) ──
+          issuer: ${{ env "DECK_ISSUER" }}
+          using_pseudo_issuer: true
+
+          # ── Endpoints (mTLS aliases on HTTPS port 9443) ──
+          # Keycloak publishes mtls_endpoint_aliases in its
+          # discovery doc when a cert-bound client exists; we hard-
+          # code those URLs here because using_pseudo_issuer skips
+          # discovery.
+          pushed_authorization_request_endpoint: https://keycloak.localhost:9443/realms/fapi2/protocol/openid-connect/ext/par/request
+          token_endpoint: https://keycloak.localhost:9443/realms/fapi2/protocol/openid-connect/token
+          jwks_endpoint: http://keycloak.localhost:9080/realms/fapi2/protocol/openid-connect/certs
+          authorization_endpoint: http://keycloak.localhost:9080/realms/fapi2/protocol/openid-connect/auth
+          end_session_endpoint: http://keycloak.localhost:9080/realms/fapi2/protocol/openid-connect/logout
+
+          # ── Client identity & mTLS authentication ──
+          client_id:
+            - kong-rp-mtls-client
+          client_auth:
+            - tls_client_auth
+          # The Kong Certificate entity declared above. Kong presents
+          # this cert+key when calling PAR / token endpoints over
+          # HTTPS, completing the mTLS handshake against Keycloak.
+          tls_client_auth_cert_id: ce451e1b-9c1e-4184-bc22-3e001336e8ed
+          tls_client_auth_ssl_verify: true
+
+          # ── Operating mode ──
+          auth_methods:
+            - authorization_code
+            - session
+          redirect_uri:
+            - http://localhost:8000/protected-mtls
+          login_redirect_uri:
+            - http://localhost:8000/protected-mtls
+          logout_redirect_uri:
+            - http://localhost:8000/
+
+          scopes:
+            - openid
+            - profile
+
+          # ── FAPI 2.0 Security Profile requirements ──
+          require_pushed_authorization_requests: true
+          require_proof_key_for_code_exchange: true
+          # JAR (signed request object) — uses tls_client_auth's
+          # certificate / key for signing as Kong does not get a
+          # separate request_object_signing_key here. Some plugin
+          # versions require client_jwk for JAR; kept off for now.
+          # require_signed_request_object: true
+
+          # ── Session ──
+          session_storage: cookie
+          session_cookie_name: kong_rp_mtls_session
+          session_cookie_http_only: true
+          session_cookie_same_site: Lax
+          session_secret: change-me-in-production-fapi2-rp-mtls-session-secret
+          session_absolute_timeout: 3600
+
+          # ── Forwarding user info ──
+          upstream_headers_claims:
+            - sub
+            - preferred_username
+            - groups
+          upstream_headers_names:
+            - x-userinfo-sub
+            - x-userinfo-username
+            - x-userinfo-groups
+
+          logout_methods:
+            - GET
+          logout_uri_suffix: /logout
+          logout_revoke: true
+          logout_revoke_access_token: true
+
+          display_errors: true
+
+    routes:
+      - name: rp-mtls-protected-route
+        paths:
+          - /protected-mtls
+        protocols:
+          - http
+          - https

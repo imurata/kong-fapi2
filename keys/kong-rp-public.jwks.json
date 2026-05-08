@@ -1,0 +1,12 @@
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "alg": "PS256",
+      "kid": "kong-rp-key-1",
+      "n": "kdSGmOIUGh88o-vFei3LFgQCpRRohsrC7q64f1rr1X7Yg8OTIatmIZBil2N4yF6rbwtHmpzE868WuwYDXpvHU_BlkNZ2HTM5JwjCA2zxBa8lJxJ3Aj40viXTUIAtO2d63D-VqVMLTt6ueeSxAXIlC4NuGfmyZ79S9ox79DcT8H6R4zRQBjFBEz5fK8A9WQ0XLNhYDhGeYX_8cy91-r8sCViubydfCEGZGurX0NAPvhlpGF0Sf-36p6KUIirV3WNWLqe1MHMlXzZuLpE9a6eaqipht79OP4EbREZ-Rk49jYgTkSQmizFI5W6EQa9nXRN9-SBcz_x5ccxoMtnn1_gXEQ",
+      "e": "AQAB"
+    }
+  ]
+}

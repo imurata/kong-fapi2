@@ -1,0 +1,6 @@
+[req]
+distinguished_name = dn
+prompt             = no
+
+[dn]
+CN = Kong FAPI2 PoC CA

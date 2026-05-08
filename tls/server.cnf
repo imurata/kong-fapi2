@@ -1,0 +1,14 @@
+[req]
+distinguished_name = dn
+req_extensions     = ext
+prompt             = no
+
+[dn]
+CN = keycloak.localhost
+O  = Kong FAPI2 PoC
+
+[ext]
+subjectAltName = DNS:keycloak.localhost,DNS:keycloak,DNS:localhost,IP:127.0.0.1
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth

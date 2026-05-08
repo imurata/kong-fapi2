@@ -1,0 +1,13 @@
+[req]
+distinguished_name = dn
+req_extensions     = ext
+prompt             = no
+
+[dn]
+CN = kong-rp-mtls-client
+O  = Kong FAPI2 PoC
+
+[ext]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth

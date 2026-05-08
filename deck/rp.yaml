@@ -1,0 +1,167 @@
+_format_version: "3.0"
+
+# ============================================================
+# Kong Gateway as FAPI 2.0 Relying Party (RP)
+# ------------------------------------------------------------
+# This deck file configures Kong with the openid-connect plugin
+# in RP (authorization_code) mode. Kong terminates the OIDC
+# flow on behalf of the backend, handles PAR / JAR / JARM /
+# PKCE / DPoP / private_key_jwt against Keycloak, and forwards
+# authenticated requests to httpbin with user info headers.
+#
+# Browser flow:
+#   1. GET http://localhost:8000/protected   (no session cookie)
+#      → Kong issues PAR, redirects browser to Keycloak
+#   2. User logs in at Keycloak
+#      → Keycloak returns signed JARM JWT to Kong's callback
+#   3. Kong exchanges code at Keycloak's token endpoint
+#      (private_key_jwt + DPoP proof)
+#   4. Kong establishes a session, redirects browser back to
+#      /protected, and forwards request to httpbin
+# ============================================================
+
+services:
+  - name: rp-protected
+    url: http://httpbin/anything
+    plugins:
+      - name: openid-connect
+        config:
+          # ── Issuer (pseudo: Kong does not perform discovery) ──
+          # Token "iss" claims will be http://keycloak.localhost:9080/...
+          # but Kong cannot reach that host from inside Docker, so
+          # we set every endpoint explicitly to the internal URL.
+          issuer: ${{ env "DECK_ISSUER" }}
+          using_pseudo_issuer: true
+
+          # ── Endpoints ──
+          # All endpoints use the *public* hostname so that:
+          #   1. Browser-facing URLs (authorization_endpoint,
+          #      end_session_endpoint) work directly.
+          #   2. Backchannel `aud` claims in private_key_jwt match
+          #      Keycloak's expected audiences (validated against
+          #      KC_HOSTNAME).
+          # Kong reaches keycloak.localhost:9080 via the
+          # `extra_hosts: keycloak.localhost:host-gateway` mapping in
+          # docker-compose.yaml (host port 9080 → keycloak:8080).
+          pushed_authorization_request_endpoint: http://keycloak.localhost:9080/realms/fapi2/protocol/openid-connect/ext/par/request
+          token_endpoint: http://keycloak.localhost:9080/realms/fapi2/protocol/openid-connect/token
+          jwks_endpoint: http://keycloak.localhost:9080/realms/fapi2/protocol/openid-connect/certs
+          authorization_endpoint: http://keycloak.localhost:9080/realms/fapi2/protocol/openid-connect/auth
+          end_session_endpoint: http://keycloak.localhost:9080/realms/fapi2/protocol/openid-connect/logout
+
+          # ── Client identity & private_key_jwt authentication ──
+          client_id:
+            - kong-rp-client
+          client_auth:
+            - private_key_jwt
+          client_alg:
+            - PS256
+          # The full private JWK that Kong will use to sign
+          # client assertions and request objects.
+          # NOTE: For production, load this via env var or Vault
+          # rather than committing the private material.
+          # NOTE: Single-letter JWK keys (n, e, d, p, q) are quoted to
+          # avoid YAML 1.1 boolean coercion (`n` would otherwise be parsed
+          # as the boolean `false`).
+          client_jwk:
+            - kty: RSA
+              use: sig
+              alg: PS256
+              kid: kong-rp-key-1
+              "n": kdSGmOIUGh88o-vFei3LFgQCpRRohsrC7q64f1rr1X7Yg8OTIatmIZBil2N4yF6rbwtHmpzE868WuwYDXpvHU_BlkNZ2HTM5JwjCA2zxBa8lJxJ3Aj40viXTUIAtO2d63D-VqVMLTt6ueeSxAXIlC4NuGfmyZ79S9ox79DcT8H6R4zRQBjFBEz5fK8A9WQ0XLNhYDhGeYX_8cy91-r8sCViubydfCEGZGurX0NAPvhlpGF0Sf-36p6KUIirV3WNWLqe1MHMlXzZuLpE9a6eaqipht79OP4EbREZ-Rk49jYgTkSQmizFI5W6EQa9nXRN9-SBcz_x5ccxoMtnn1_gXEQ
+              "e": AQAB
+              "d": Af7TN6jSRxg503Fgsp8JShwUcC9TDdMc7zinUCDNnM5_RnBI5VtLyrZHzxP-nVlERcD1Ah3WiRISgM0ggy0lAVZHAYAZviULCWhyhSr6sk32922mgLqarKZmWZHjbI5qLTTWhqpa-4GLCCJztJYcASgTe9oBka9ZwoNiF9GgHXiMmgkM4PqZwDGlmkXmgu8mwS4vljZORLo_dANMrpvd8tEfhkxiqZQ_iWDziseVoWDkzHxjDLM09P6glwDWicIvqsDYr_GM2tOy4GNR-FoC4Ic-bnEiHwYwt18HDOkePbHzknzjj3zk0XPVodvKCyukuTBsnEce1rb-VQc8Xk1vVQ
+              "p": yeHqSINtKoJMGkk356sHKtr_J7QjcQt-L0UDCxwwDZIwIhWGZ9ncIMPrEFRETc75TdbxatBNbAIhpfS28Ghc_3P9J_SV78DQWW4Fsp1x7LMSap-6c8Ao5dTezgnWVI2Rap4ISzB6MVLzNp0nBKIjIMiJi9EvvgCuUt1w0H_HHt0
+              "q": uOwMmvNSC-tmX3T7A7llShM0G5yw4HZVG9NkPlyC08LcOpV2J8sl2O_f5mUHiWuoOkOUd8XSL2IJOIGwQzVMus43qjK7gnJZUb9rHCKAaKegJgBgnaVwHrjqrC-S6mi_1__Aj_PiwPlsXO6QjLTj-eRlfIIfs2yZCdZIgVD3w8U
+              dp: DLp1rwS6SUfVzIJ5R938obMVC0fMREBZQFm1i2nHjdN9vWhmBP4zZs1zcKAfflhiV4oJxpZDi1_HB1OahSXPVzvU5kQBgBBEEp9hNJXArQ_NRXO0qb-f1H3LXmo4XTRfyr0UAMmZqqp0MylNYHlohZSfN3WE8RHR69-SUVL9FvE
+              dq: OX8jeDY5h308ymdb-M93P-3yoLc6g8AnPEyg-YbYIrGOuiRopXzTmr0St9cn3cF8gAktK4R1ksf_p_Mi8_KpldeylRfLF4coYHONASV1GZUtBUPOxpV-4_6I8Nql6n6BT860d83T7j5fRBHlHerMi5FJQMpQwv_8IYPf7V1YfCU
+              qi: gt6x5xeYmuiL6I-01v5TtQSBajemo6SRgpxTssMPWaUnFc6LBtxBp7jr0tRQVV1hu2crPyAyww87unF0zE9co0FHj6Gvm8FysGIEzFhYgrpBVBqfJOypOZPg2rvGuA86HWo25AyvwQtqhTFwWSnVQvYCUD74KZaYY2BZ4Q04slw
+
+          # ── Operating mode: terminate the auth code flow ──
+          auth_methods:
+            - authorization_code
+            - session
+
+          # The redirect_uri registered on the kong-rp-client in
+          # Keycloak. Browsers must reach Kong at this URL.
+          redirect_uri:
+            - http://localhost:8000/protected
+          login_redirect_uri:
+            - http://localhost:8000/protected
+          logout_redirect_uri:
+            - http://localhost:8000/
+
+          scopes:
+            - openid
+            - profile
+
+          # ── FAPI 2.0 Security Profile requirements ──
+          # PAR (RFC 9126): force every authorization request to
+          # be pushed first.
+          require_pushed_authorization_requests: true
+          # PKCE S256 (Security Profile §5.x).
+          require_proof_key_for_code_exchange: true
+          # NOTE: DPoP-bound access tokens (sender-constrained) are
+          # part of FAPI 2.0 Security Profile, but Kong's openid-connect
+          # plugin does NOT generate DPoP proofs when acting as a
+          # client (RP). proof_of_possession_dpop only *validates*
+          # incoming DPoP proofs (RS use case), it does not create
+          # them when Kong calls the token endpoint. This RP demo
+          # therefore omits DPoP at the Kong layer; full FAPI 2.0
+          # compliance with DPoP-bound tokens would require either a
+          # custom plugin/extension or moving the RP responsibility
+          # to a BFF/Backend that can generate DPoP proofs.
+          # See README for the limitation discussion.
+
+          # ── FAPI 2.0 Message Signing options ──
+          # JAR: sign the request object with the client JWK.
+          require_signed_request_object: true
+          # JARM: signed authorization responses. The Keycloak
+          # `kong-rp-client` has `authorization.signed.response.alg`
+          # set, which makes Keycloak return a signed JWT in the
+          # `response` query parameter; Kong's openid-connect plugin
+          # transparently accepts this on the callback path.
+          response_type:
+            - code
+
+          # ── Session ──
+          # Cookie-backed sessions are simplest for a PoC.
+          # Switch to redis for multi-DP / HA deployments.
+          session_storage: cookie
+          session_cookie_name: kong_rp_session
+          session_cookie_http_only: true
+          session_cookie_same_site: Lax
+          # session_secret is required for cookie sessions; this
+          # is a non-secret PoC value.
+          session_secret: change-me-in-production-fapi2-rp-session-secret
+          session_absolute_timeout: 3600
+
+          # ── Forwarding user info to the upstream ──
+          # The backend (httpbin) sees these headers on every
+          # authenticated request and does not need to understand
+          # OAuth itself.
+          upstream_headers_claims:
+            - sub
+            - preferred_username
+            - groups
+          upstream_headers_names:
+            - x-userinfo-sub
+            - x-userinfo-username
+            - x-userinfo-groups
+
+          # ── Logout ──
+          logout_methods:
+            - GET
+          logout_uri_suffix: /logout
+          logout_revoke: true
+          logout_revoke_access_token: true
+
+          display_errors: true
+
+    routes:
+      - name: rp-protected-route
+        paths:
+          - /protected
+        protocols:
+          - http
+          - https
