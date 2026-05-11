@@ -1,5 +1,18 @@
 Kong Gateway を使った FAPI 2.0の検証
 
+## このドキュメントの読み方
+
+ドキュメント全体は仕様解説と実機検証で構成されており分量が多い。目的別に以下を起点に読むと進めやすい。
+
+- **FAPI 2.0 の仕様を理解したい**: [FAPIとは](#fapiとは) 〜 [FAPI 1.0と2.0の相違点](#fapi-10と20の相違点)
+- **どの IdP / API Gateway が FAPI 2.0 に対応しているかを把握したい**: [FAPI 2.0 の対応状況](#fapi-20-の対応状況)、[API Gateway の FAPI 2.0 対応状況比較](#api-gateway-の-fapi-20-対応状況比較)
+- **Kong をリソースサーバーとして使う構成を試したい**: [検証 1: Kong = RS](#検証-1-kong--rs)
+- **Kong を RP（OIDC 終端）として使う構成を試したい**: [検証 2: Kong = RP](#検証-2-kong--rp)
+- **mTLS で sender-constrained access token を取得したい**: [検証 3: Kong = RP × mTLS](#検証-3-kong--rp--mtls)
+- **deck / Keycloak の設定値の意味を確認したい**: [付録 - Kong Gateway と Keycloak の設定解説](#付録---kong-gateway-と-keycloak-の設定解説)
+- **検証中のハマりどころだけ拾いたい**: [付録 - 検証中に判明した注意点](#付録---検証中に判明した注意点)
+- **FAPI 認定の取得方法を知りたい**: [付録 - FAPI 認定の取得方法](#付録---fapi-認定conformance-certificationの取得方法)
+
 ## 目次
 
 - [目次](#目次)
@@ -228,7 +241,7 @@ Security Profile に加えて、**リクエスト・レスポンスそのもの�
 
 重要な点として、Message Signing 仕様は **3 つの独立した conformance option** で構成されており、実装はこれらを任意の組み合わせで採用できる。「Message Signing に準拠するなら全部必須」ではない。仕様 §5.1 は "We understand that some ecosystems may only desire to implement 1, 2 or 3 of the above" と述べており、エコシステムが必要な option だけを選んで実装することを想定している。
 
-なお仕様は「最低 1 つ必須」と明示してはいないが、**「Message Signing 準拠」を主張するためには 3 つの option のうち少なくとも 1 つを実装している必要がある** と理解するのが実務上の整理である。0 個実装した状態では「Message Signing 準拠」を主張する実体的根拠がなく、Security Profile 準拠のみの状態と同等になる。
+なお仕様本文は「最低 1 つ必須」と明示しているわけではない。ただし、3 つの option のいずれも実装していない状態では、実務上「Message Signing 対応」を主張する根拠は乏しく、Security Profile 準拠のみの状態と区別しにくい。
 
 | Conformance option | 関連技術 | 説明 |
 | --- | --- | --- |
@@ -455,7 +468,7 @@ FAPI 1.0 の普及に伴い、実装経験から得られた知見・OAuth 2.0 �
 | 2021年7月 | FAPI 2.0 Implementer's Draft 1 承認 |
 | 2022年11月〜2023年1月 | Implementer's Draft 2 パブリックレビューおよび承認 |
 | **2025年2月19日** | **FAPI 2.0 Security Profile / Attacker Model 最終仕様承認** |
-| **2025年9月25日** | **FAPI 2.0 Message Signing 最終仕様承認** |
+| **2025年9月26日** | **FAPI 2.0 Message Signing 最終仕様承認** |
 
 ### FAPI 1.0と2.0の相違点
 
@@ -914,9 +927,9 @@ FAPI 2.0 Security Profile はどちらでも準拠と認められる。実装側
 | 役割 | DPoP | mTLS |
 | --- | --- | --- |
 | **RS としての検証**（受け取った token を確認） | ✅ `proof_of_possession_dpop: strict` | ✅ `proof_of_possession_mtls: strict`（実装あり、本リポジトリでは未実証） |
-| **RP としての発行**（自身が token を取得しに行く） | ❌ Kong は DPoP Proof を生成しない | ✅ `client_auth: tls_client_auth` で実証済み（[検証 3](#検証-3-kong--rp--mtls)） |
+| **RP としてのトークン取得**（自身が token を取得しに行く） | ❌ Kong は DPoP Proof を生成しない | ✅ `client_auth: tls_client_auth` で実証済み（[検証 3](#検証-3-kong--rp--mtls)） |
 
-本リポジトリの検証 3 は「**Kong RP × mTLS 方式の sender-constrained token**」を実際に動かして `cnf.x5t#S256` までトークンに刻まれることを確認している。
+本リポジトリの検証 3 は、Kong が RP として mTLS クライアント認証を行い、**Keycloak が Kong のクライアント証明書に紐づく sender-constrained access token（`cnf.x5t#S256` 付き）を発行する** ことを実機で確認している。トークン発行の主体はあくまで AS（Keycloak）であり、Kong は受領側として `cnf.x5t#S256` がトークンに刻まれていることを introspection で確認している。
 
 ## API Gateway の FAPI 2.0 対応状況比較
 
@@ -1185,7 +1198,7 @@ Kong Gateway の `openid-connect` プラグインは、FAPI 2.0 に必要な技�
 | JARM | `response_mode: jwt` 等 | Message Signing: JARM | RP モード（送信側・受信側ともに実装済み。ただし初回 discovery 時の JWKS と JARM 署名鍵の整合性に注意。詳細は[検証 2 の補足](#jarmresponse_mode-jwtと-kong-初回-discovery-時の-jwks-整合性)） |
 | DPoP 検証 | `proof_of_possession_dpop: strict` | Security Profile: sender-constrained token | RS モード |
 | mTLS 証明書バインド検証 | `proof_of_possession_mtls: strict` | Security Profile: sender-constrained token | RS モード |
-| mTLS クライアント認証 | `client_auth: tls_client_auth` | Security Profile: 強いクライアント認証 | RS モード |
+| mTLS クライアント認証 | `client_auth: tls_client_auth` | Security Profile: 強いクライアント認証 | RP モード |
 | スコープ検証 | `scopes_required` | Security Profile: 必要なスコープの強制 | RS モード |
 
 参考: [openid-connect プラグイン FAPI ドキュメント](https://developer.konghq.com/plugins/openid-connect/#financial-grade-api-fapi)
