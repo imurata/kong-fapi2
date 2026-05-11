@@ -159,7 +159,7 @@ Kong Gateway を使った FAPI 2.0の検証
     - [YAML 1.1 の boolean 暗黙変換（`n:` が `false` になる）](#yaml-11-の-boolean-暗黙変換n-が-false-になる)
     - [Kong プラグイン側のキー名は `jwks_endpoint`](#kong-プラグイン側のキー名は-jwks_endpoint)
     - [DPoP の RP 側生成は未対応](#dpop-の-rp-側生成は未対応)
-    - [JARM（`response_mode: query.jwt`）も Kong RP では未到達](#jarmresponse_mode-queryjwtも-kong-rp-では未到達)
+    - [JARM（`response_mode: jwt`）と Kong 初回 discovery 時の JWKS 整合性](#jarmresponse_mode-jwtと-kong-初回-discovery-時の-jwks-整合性)
     - [`proof_of_possession_auth_methods_validation: false` が必要なケース](#proof_of_possession_auth_methods_validation-false-が必要なケース)
   - [検証 3（Kong = RP × mTLS）で踏んだ注意点](#検証-3kong--rp--mtlsで踏んだ注意点)
     - [Kong Admin API は `id` フィールドに UUID v4 を要求する](#kong-admin-api-は-id-フィールドに-uuid-v4-を要求する)
@@ -926,7 +926,7 @@ API Gateway は FAPI 2.0 においてリソースサーバー（RS）として�
 
 | 製品 | DPoP 検証 | mTLS 証明書バインド | PAR / JAR / JARM（RP / OAuth client mode 時） | FAPI 明示サポート | 備考 |
 | --- | --- | --- | --- | --- | --- |
-| **Kong Gateway** | ✅ | ✅ | PAR ✅ / JAR ✅ / **JARM ⚠️ 送信側のみ**（受信側 JWT 検証は未実装、本リポジトリの検証 2 で確認） | ✅ ドキュメントあり | `openid-connect` プラグインで実装。JARM は `response_mode=query.jwt` を AS に送れるが、戻りの JWT を解釈できないため認可フローが完結しない（[検証 2 の補足](#検証-2kong--rpの補足)） |
+| **Kong Gateway** | ✅ | ✅ | PAR ✅ / JAR ✅ / JARM ✅ | ✅ ドキュメントあり | `openid-connect` プラグインで実装。JARM は受信側も実装されているが、初回 discovery 時の JWKS と JARM 署名鍵（PS256）の整合性に注意が必要（[検証 2 の補足](#jarmresponse_mode-jwtと-kong-初回-discovery-時の-jwks-整合性)） |
 | **MuleSoft Anypoint** | 不明 | 不明 | 不明 | 不明 | 公開ドキュメントで FAPI 固有 RS 機能を確認できず |
 | **AWS API Gateway** | ❌ | ⚠️ トランスポート層のみ | ❌ | ❌ | JWT Authorizer による基本検証のみ。DPoP・証明書バインド検証はカスタム Lambda が必要 |
 | **Google Apigee** | 不明 | 不明 | 不明 | 不明 | 公開ドキュメントで FAPI 固有 RS 機能を確認できず。FAPI 準拠が必要な場合は外部 AS やカスタム実装との組み合わせが必要になる可能性がある |
@@ -944,9 +944,9 @@ API Gateway は FAPI 2.0 においてリソースサーバー（RS）として�
 
 **Kong Gateway** は FAPI 2.0 の RS 機能（DPoP 検証・mTLS 証明書バインド）をプラグイン 1 つでネイティブにサポートしており、加えて OIDC RP / OAuth client mode として動作する場合の **PAR・JAR は同プラグインで完結** している（本リポジトリの[検証 2](#検証-2-kong--rp) で実証）。他製品と比較して追加実装の必要がない点が特徴である。
 
-ただし **JARM については `response_mode=query.jwt` を AS に送る送信側機能のみが実装されており、AS から戻ってきた JWT 形式の認可レスポンスを検証する受信側機能は未実装** である。設定値としては `query.jwt` を受け付けてしまうが、実際に有効化すると Kong がコールバック URL のクエリ文字列に `code` パラメータを見つけられず、認可フローが先に進まない（詳細は[検証 2 の補足](#検証-2kong--rpの補足)）。**JARM が必要な場合は本稿執筆時点では Kong の openid-connect プラグインだけでは完結しない** ため、Backend / BFF を RP に置く構成が必要になる。
+JARM については **受信側も `openid-connect` プラグインで実装されている**（送信時の `response_mode=jwt` だけでなく、AS から戻ってきた `?response=<JWT>` を開いて alg/kid で JWKS を引いて検証する経路まで動く）。ただし運用上、**Keycloak のレイジー PS256 鍵生成と Kong 側 issuer cache のスナップショット**が組み合わさると、初回 discovery 時点の JWKS に JARM 署名鍵が含まれず `suitable jwk was not found` で失敗するケースがある。`DELETE /openid-connect/issuers` で cache を破棄して再 discovery させれば解消する（詳細は[検証 2 の補足](#jarmresponse_mode-jwtと-kong-初回-discovery-時の-jwks-整合性)）。
 
-なお FAPI 2.0 Security Profile **本体では JARM は要求されない**（[Message Signing](#fapi-20-message-signing) の signed authorization responses option を採用した場合のみ必須）ため、Security Profile に限った準拠であれば Kong の JARM 受信側未実装は実質的な制約にならない。
+なお FAPI 2.0 Security Profile **本体では JARM は要求されない**（[Message Signing](#fapi-20-message-signing) の signed authorization responses option を採用した場合のみ必須）ため、Security Profile に限った準拠であれば JARM の利用可否そのものが実質的な制約にはならない。
 
 ---
 
@@ -987,7 +987,7 @@ Kong Gateway は `openid-connect` プラグインの設定次第で **RS** に�
 | --- | --- | --- |
 | **Kong の責務** | アクセストークン検証・DPoP / mTLS 検証・スコープ確認 | 上記に加えて、認可コードフロー全体（PAR / JAR 送信、トークン取得、JARM 検証）・セッション管理・logout |
 | **メリット** | ・**責務分離が明確** で、Kong は API 保護のみに専念できる<br>・業務ロジック・consent・トークンライフサイクル制御を Backend / BFF 側で **自由に書ける**<br>・セッション・独自 state を Backend で持てるので **拡張性が高い**<br>・Kong プラグインの機能制約に縛られない<br>・Backend ごとに認証・認可ポリシーを差別化しやすい | ・**OIDC RP 機能を Kong に一元化できる**（複数 Backend 横断の認証ポリシー・セッション管理・監査ログが Kong に集約され、ガバナンスが効きやすい。Backend 側で OIDC を再実装する必要もなく一貫性を保てる）<br>・Backend が OAuth / OIDC を **一切意識せずに済む**（OAuth 非対応のレガシー Backend をそのまま FAPI 2.0 配下に置ける）<br>・PAR / JAR / `private_key_jwt` / mTLS の RP 機能が **deck の設定だけで動く**（実装ゼロ）<br>・PoC・検証環境を **短時間で組める**<br>・セッション管理・トークン更新・logout を Kong が肩代わり |
-| **デメリット** | ・**Backend / BFF に OIDC RP 実装が必須**（FAPI 2.0 のクライアント側責務をすべて Backend が担う）<br>・Backend を所有・改修できない場合は採用不可<br>・**OIDC 実装が Backend ごとに分散** するため、ポリシー一貫性の担保や監査の集約に運用コストがかかる | ・一元化の裏返しとして **Kong が単一障害点 / ボトルネック** になりやすい（Kong が落ちるとすべての保護下 API が使えなくなる、性能要件は Kong 側でスケール設計が必要）<br>・**Kong プラグインの機能制約に縛られる**（検証 2 で判明：DPoP の RP 側生成不可・JARM の RP 側受信不可など、Backend 側で迂回することもできない。詳細は[検証 2 の補足](#検証-2kong--rpの補足)）<br>・consent 取り消し等の業務固有ロジックを **Backend 側で動かしにくい**<br>・セッションストア・Cookie 設計を Kong 側で持つ必要があり、運用設計が増える |
+| **デメリット** | ・**Backend / BFF に OIDC RP 実装が必須**（FAPI 2.0 のクライアント側責務をすべて Backend が担う）<br>・Backend を所有・改修できない場合は採用不可<br>・**OIDC 実装が Backend ごとに分散** するため、ポリシー一貫性の担保や監査の集約に運用コストがかかる | ・一元化の裏返しとして **Kong が単一障害点 / ボトルネック** になりやすい（Kong が落ちるとすべての保護下 API が使えなくなる、性能要件は Kong 側でスケール設計が必要）<br>・**Kong プラグインの機能制約に縛られる**（検証 2 で判明：DPoP の RP 側生成は Kong プラグインで未対応で Backend 側で迂回することもできない。詳細は[検証 2 の補足](#検証-2kong--rpの補足)）<br>・consent 取り消し等の業務固有ロジックを **Backend 側で動かしにくい**<br>・セッションストア・Cookie 設計を Kong 側で持つ必要があり、運用設計が増える |
 | **適した場面** | 本番設計、業務ロジックを持つ Backend がある高セキュリティ API、Backend ごとに独自の認可ロジックを持たせたい場合 | PoC・デモ、レガシー Backend 統合、BFF 代替、**複数 Backend を共通の OIDC ポリシーで一括保護したい場合** |
 
 実運用での選び方の指針は以下の通り。
@@ -1003,7 +1003,7 @@ Kong Gateway は `openid-connect` プラグインの設定次第で **RS** に�
 | 構成 | deck ファイル | Keycloak クライアント | 検証スクリプト | 主に何を見るか |
 | --- | --- | --- | --- | --- |
 | **検証 1: Kong = RS** | `deck/rs.yaml` | `fapi2-test-client`（client_secret_post） | `scripts/dpop_e2e_verify.py` | Kong が DPoP-bound アクセストークンを正しく検証して RS として保護できること |
-| **検証 2: Kong = RP**（private_key_jwt） | `deck/rp.yaml` | `kong-rp-client`（private_key_jwt + PAR + JAR） | `scripts/rp_e2e_verify.py` | Kong がブラウザ向けに OIDC 認可コードフローを終端し、PAR・JAR・private_key_jwt を実装して RP として動作できること。**ただし sender-constrained token は未到達**（JARM・DPoP は Kong プラグインの制約で不可、詳細は [検証 2（Kong = RP）の補足](#検証-2kong--rpの補足)） |
+| **検証 2: Kong = RP**（private_key_jwt） | `deck/rp.yaml` | `kong-rp-client`（private_key_jwt + PAR + JAR） | `scripts/rp_e2e_verify.py` | Kong がブラウザ向けに OIDC 認可コードフローを終端し、PAR・JAR・private_key_jwt を実装して RP として動作できること。**ただし sender-constrained token は未到達**（DPoP の RP 側生成が Kong プラグインで未対応のため。JARM は受信側も対応済みだが本 deck では PoC 簡素化のため無効化、詳細は [検証 2（Kong = RP）の補足](#検証-2kong--rpの補足)） |
 | **検証 3: Kong = RP × mTLS** | `deck/rp-mtls.yaml` | `kong-rp-mtls-client`（client-x509 + cert-bound tokens + JAR 用 JWKS） | `scripts/rp_mtls_e2e_verify.py` | Kong が **mTLS クライアント認証** で Keycloak とトークン交換し、`cnf.x5t#S256` を持つ **証明書バインドのアクセストークン** を取得できること。FAPI 2.0 Security Profile が要求する **sender-constrained token を mTLS 経路で実現** し、加えて Message Signing の **JAR option（PS256 で署名された Request Object）** まで揃える |
 
 それぞれの構成のセットアップ・検証手順は「[検証 1: Kong = RS](#検証-1-kong--rs)」「[検証 2: Kong = RP](#検証-2-kong--rp)」「[検証 3: Kong = RP × mTLS](#検証-3-kong--rp--mtls)」で詳述する。
@@ -1028,10 +1028,10 @@ Kong Gateway は `openid-connect` プラグインの設定次第で **RS** に�
 | JAR（署名済み Request Object） | ✅ 使用 | `require_signed_request_object: true` でプラグインが対応 |
 | `private_key_jwt` | ✅ 使用 | `client_auth: private_key_jwt` + `client_jwk` で PS256 署名 |
 | PKCE S256 | ✅ 使用 | `require_proof_key_for_code_exchange: true` |
-| JARM（署名済み認可レスポンス） | ⚠️ 使用しない | Kong プラグインで `response_mode: query.jwt` を指定すると、Kong がコールバック時の JARM JWT を認識せず認可フローを最初からやり直す挙動となる。検証では JARM を無効化して plain `code` で受信。Keycloak 側の JARM サポート自体は確認済み |
+| JARM（署名済み認可レスポンス） | ⚠️ 本 deck では使用しない | Plugin は JARM の受信側にも対応している（実機検証済み）が、本 PoC では構成を簡素化するため `response_mode: jwt` を有効化していない。JARM 込みの最小再現は別ディレクトリ `~/work/FAPI/JARM/` に切り出してある。なお有効化する場合は initial discovery 時の JWKS に JARM 署名鍵が含まれるかに注意（詳細は[検証 2 の補足](#jarmresponse_mode-jwtと-kong-初回-discovery-時の-jwks-整合性)） |
 | DPoP（sender-constrained token） | ❌ 使用しない | Kong の openid-connect プラグインは **DPoP の検証（RS 用途）** のみをサポートし、**RP として DPoP Proof JWT を生成する機能はない**。token endpoint への DPoP 提示が必要な構成（Keycloak 側 `dpop.bound.access.tokens=true`）にすると、Kong の token request が `invalid_dpop_proof` で失敗するため、本検証では Keycloak 側の DPoP 要件も外している |
 
-したがって検証 2 で実証されるのは **FAPI 2.0 Security Profile の大部分（PAR + PKCE + private_key_jwt + JAR）** であり、**JARM と DPoP の RP 側機能は未達** である。
+したがって検証 2 で実証されるのは **FAPI 2.0 Security Profile の大部分（PAR + PKCE + private_key_jwt + JAR）** であり、**sender-constrained token（DPoP の RP 側生成）は未達** である。JARM は Plugin として対応しているが本 deck では `response_mode: jwt` を有効化していない。
 
 ただし FAPI 2.0 が sender-constrained token に求めるのは「**DPoP または mTLS のいずれか**」なので、DPoP の代わりに mTLS で sender-constrained token を実現するパスがある（[検証 3: Kong = RP × mTLS](#検証-3-kong--rp--mtls)）。Kong の openid-connect プラグインは `client_auth: tls_client_auth` をサポートしており、mTLS 経路で `cnf.x5t#S256` を持つ証明書バインドのアクセストークンを取得できる（実証済み）。検証 2 と検証 3 を **DPoP 方式 vs mTLS 方式の対比** として読み比べると、Kong で FAPI 2.0 Security Profile の sender-constrained 要件を満たすルートが見える。
 
@@ -1051,7 +1051,7 @@ Kong Gateway は `openid-connect` プラグインの設定次第で **RS** に�
 
 > **JAR と mTLS は別レイヤー** : `tls_client_auth` は TLS ハンドシェイクで X.509 証明書を提示する **クライアント認証**であり、アプリケーション層の **Request Object 署名鍵（JAR）** は提供しない。そのため検証 3 では mTLS 用の証明書とは別に、PS256 の `client_jwk` を deck に投入して JAR を実装している。Keycloak 側は `kong-rp-mtls-client` の Advanced 属性に対応する公開 JWK を登録しており、PAR 受信時にその鍵で Request Object の署名を検証する（誤った鍵で署名すると Keycloak は `400 Bad Request` で PAR を拒否することを negative test で確認済み）。
 >
-> なお JARM（signed authorization responses）は検証 2 と同様の Kong RP 側制約により未使用、Signed Introspection Responses は本 PoC のアーキテクチャ（Kong は token endpoint から直接トークンを受領、introspection 経路を持たない）の対象外である。
+> なお JARM（signed authorization responses）は検証 2 と同様、Plugin としては対応済みだが本 deck では有効化していない。Signed Introspection Responses は本 PoC のアーキテクチャ（Kong は token endpoint から直接トークンを受領、introspection 経路を持たない）の対象外である。
 
 #### 各構成のフロー（実装ベース）
 
@@ -1060,10 +1060,10 @@ Kong が RS / RP として果たす役割は、本リポジトリの 3 つの検
 | 構成 | Kong の関与範囲 | フロー図の場所 |
 | --- | --- | --- |
 | **RS（Kong がリソース保護のみ担当）** | フェーズ 4（API 呼び出し時の DPoP 検証）のみ | [検証 1 のフロー](#検証-1-のフローkong--rs) |
-| **RP × `private_key_jwt`（Kong が OIDC 終端）** | フェーズ 1〜4 の全工程に介在（JARM / DPoP は Kong プラグインの制約で未実装） | [検証 2 のフロー](#検証-2-のフローkong--rp--private_key_jwt) |
+| **RP × `private_key_jwt`（Kong が OIDC 終端）** | フェーズ 1〜4 の全工程に介在（DPoP の RP 側生成は Kong プラグインで未実装。JARM は対応済みだが本 deck では無効化） | [検証 2 のフロー](#検証-2-のフローkong--rp--private_key_jwt) |
 | **RP × `mTLS`（sender-constrained token を mTLS 方式で取得）** | RP × `private_key_jwt` と同じ範囲 + Kong → Keycloak 間が mTLS で `cnf.x5t#S256` 付きトークンを取得 | [検証 3 のフロー](#検証-3-のフローkong--rp--mtls--jar) |
 
-OAuth 非対応のレガシー Backend を FAPI 2.0 の保護下に置きたい場合や、PoC として Kong プラグインの設定だけで FAPI 2.0 フローを動かしたい場合に Kong RP 構成は有効である。次の小節では、その RP モード設定の **理論上の最大構成** を示す（DPoP / JARM を含む。実際に動かせる範囲は検証 2 / 3 を参照）。
+OAuth 非対応のレガシー Backend を FAPI 2.0 の保護下に置きたい場合や、PoC として Kong プラグインの設定だけで FAPI 2.0 フローを動かしたい場合に Kong RP 構成は有効である。次の小節では、その RP モード設定の **理論上の最大構成** を示す（DPoP / JARM を含む。DPoP の RP 側生成は現状 Kong プラグインで未対応、JARM は対応済み。実際に動かせる範囲は検証 2 / 3 を参照）。
 
 #### openid-connect プラグインの RP モード設定例
 
@@ -1151,7 +1151,7 @@ plugins:
 - **`client_auth: private_key_jwt` + `client_jwk`** — FAPI 2.0 の Confidential Client 要件を満たす。Kong は `client_jwk` の秘密鍵で client assertion JWT を署名し、PAR・トークンエンドポイントへ送る
 - **`require_pushed_authorization_requests: true`** — Kong が必ず PAR エンドポイント経由で認可リクエストを送る。素の `/authorize` を直接叩く挙動を禁止する
 - **`require_signed_request_object: true` + `request_object_signing_algorithm: PS256`** — PAR リクエストに JAR（署名済み Request Object）を載せる。Message Signing 要件を満たす
-- **`response_mode: [jwt]` + `authorization_signed_response_alg: PS256`** — JARM で認可レスポンス（code 等）を署名済み JWT で受け取る設定。**ただし本稿執筆時点の Kong プラグインでは送信側のみ実装で受信側 JWT の検証が未対応** のため、実際に有効化すると認可フローがコールバック時点で停止する（[検証 2 の補足](#検証-2kong--rpの補足) 参照）
+- **`response_mode: [jwt]` + `authorization_signed_response_alg: PS256`** — JARM で認可レスポンス（code 等）を署名済み JWT で受け取る設定。Plugin は受信側も対応しているが、**初回 discovery 時点の JWKS に JARM 署名鍵が含まれていないと `suitable jwk was not found` で失敗する**ことがある（Keycloak のレイジー PS256 鍵生成と Kong issuer cache スナップショットの組み合わせ。詳細は [検証 2 の補足](#jarmresponse_mode-jwtと-kong-初回-discovery-時の-jwks-整合性) 参照）
 - **`pkce: strict` + `pkce_method: S256`** — PKCE を必須化、ハッシュ方式は S256 のみ許可
 - **`proof_of_possession_dpop: strict`** — Kong 自身が DPoP Proof を生成し、sender-constrained なアクセストークンを取得する。RS 構成では「受け取った Proof を検証する」だったが、RP では「Proof を生成する」側になる
 - **`upstream_headers_claims` / `upstream_headers_names`** — トークンから取り出したクレームをヘッダーで Backend に伝える。Backend は OAuth を意識せず、ヘッダーだけ見ればよい
@@ -1182,7 +1182,7 @@ Kong Gateway の `openid-connect` プラグインは、FAPI 2.0 に必要な技�
 | --- | --- | --- | --- |
 | PAR | `pushed_authorization_request_endpoint` | Security Profile: PAR 必須 | RP モード |
 | JAR | `require_signed_request_object: true` | Message Signing: JAR | RP モード |
-| JARM | `response_mode: query.jwt` 等 | Message Signing: JARM | RP モード（**送信側のみ実装**：受信側の JWT 検証は未対応で、実際に有効化すると認可フローが停止する。詳細は[検証 2 の補足](#検証-2kong--rpの補足)） |
+| JARM | `response_mode: jwt` 等 | Message Signing: JARM | RP モード（送信側・受信側ともに実装済み。ただし初回 discovery 時の JWKS と JARM 署名鍵の整合性に注意。詳細は[検証 2 の補足](#jarmresponse_mode-jwtと-kong-初回-discovery-時の-jwks-整合性)） |
 | DPoP 検証 | `proof_of_possession_dpop: strict` | Security Profile: sender-constrained token | RS モード |
 | mTLS 証明書バインド検証 | `proof_of_possession_mtls: strict` | Security Profile: sender-constrained token | RS モード |
 | mTLS クライアント認証 | `client_auth: tls_client_auth` | Security Profile: 強いクライアント認証 | RS モード |
@@ -1734,17 +1734,17 @@ curl -i http://localhost:8000/anything \
 
 検証 2 では Kong を **FAPI 2.0 Confidential Client（OIDC RP）に近い構成** で動作させる。Kong がブラウザを終端し、**PAR / JAR / private_key_jwt** を `openid-connect` プラグインで実装する。Backend（httpbin）は OAuth/OIDC を一切意識せず、Kong から渡される `x-userinfo-*` ヘッダーを受け取るだけでよい。
 
-ただし **JARM（署名済み認可レスポンス）と DPoP（sender-constrained token）は Kong の openid-connect プラグインの仕様上、本検証では到達できなかった**。詳細は「[検証 2（Kong = RP）の補足](#検証-2kong--rpの補足)」を参照。
+ただし **DPoP（sender-constrained token の RP 側生成）は Kong の openid-connect プラグインの仕様上、本検証では到達できなかった**。JARM は Plugin として対応しているが本 PoC では構成簡素化のため `deck/rp.yaml` で無効化している。詳細は「[検証 2（Kong = RP）の補足](#検証-2kong--rpの補足)」を参照。
 
-> 実装中に踏んだ注意点（YAML 1.1 の `n:` boolean 衝突、`jwks_endpoint` キー名、DPoP / JARM の RP 側未対応 など）は「[付録 - 検証中に判明した注意点](#付録---検証中に判明した注意点)」にまとめている。
+> 実装中に踏んだ注意点（YAML 1.1 の `n:` boolean 衝突、`jwks_endpoint` キー名、DPoP の RP 側未対応、JARM 有効化時の JWKS 整合性 など）は「[付録 - 検証中に判明した注意点](#付録---検証中に判明した注意点)」にまとめている。
 
 #### 検証 2 のフロー（Kong = RP × private_key_jwt）
 
 検証 1 と異なり、**Kong がすべてのフェーズに関与する**。ブラウザは Kong しか見えず、Kong が PAR / JAR / private_key_jwt / トークン取得 / セッション管理を肩代わりする。Backend（httpbin）は OAuth/OIDC を一切意識せず、Kong から渡される `x-userinfo-*` ヘッダーだけを受け取ればよい。
 
-> **注意**: 以下のフローは **Kong が現バージョンで実際に動かせる範囲** で描いている。FAPI 2.0 + Message Signing の最大構成（JARM・DPoP の RP 側生成）は Kong の `openid-connect` プラグインでは未実装のため、本検証では：
+> **注意**: 以下のフローは **本 deck で実際に動かす構成** で描いている。DPoP の RP 側生成は Kong の `openid-connect` プラグインで未実装、JARM は Plugin として対応しているが本 PoC では構成簡素化のため有効化していないため、本検証では：
 >
-> - **JARM 不採用**：認可レスポンスは plain `code`（`?code=...&state=...&iss=...`）で受信する
+> - **JARM 不採用**：認可レスポンスは plain `code`（`?code=...&state=...&iss=...`）で受信する（Plugin 対応状況は[検証 2 の補足](#jarmresponse_mode-jwtと-kong-初回-discovery-時の-jwks-整合性)）
 > - **DPoP 不採用**：access_token は sender-constrained でない（`cnf` クレームなし）
 >
 > sender-constrained token を Kong RP で実現するルートは [検証 3: Kong = RP × mTLS](#検証-3-kong--rp--mtls) を参照。
@@ -1863,7 +1863,7 @@ python3 scripts/rp_e2e_verify.py
     ✓ Form action: ...
 [3] POST credentials (alice)
     → 302 redirect to Kong with auth code
-    ⚠ Plain 'code' returned (not JARM).  ← JARM 未使用（Kong 制約のため）
+    ⚠ Plain 'code' returned (not JARM).  ← 本 deck では JARM 無効（Plugin は対応済）
 [4] Follow callback into Kong (token exchange + upstream forward)
     → 200 with httpbin echo
     ✓ Session cookie set: kong_rp_session
@@ -2066,7 +2066,7 @@ http://localhost:8000/protected
 
 ログイン成功後、Keycloak がブラウザを Kong のコールバック URL（`/protected?code=<認可コード>&state=<state>`）にリダイレクトする。Kong は受け取った認可コードを Keycloak のトークンエンドポイントへ private_key_jwt 認証で交換する。
 
-> 本検証では JARM・DPoP は使用していない（Kong プラグインの制約による、詳細は[検証 2 の補足](#検証-2kong--rpの補足)）。Message Signing 仕様の signed authorization responses option を採用した完全な構成では、コールバック URL は `/protected?response=<JARM JWT>` の形になる。
+> 本検証では JARM・DPoP は使用していない（DPoP の RP 側生成は Kong プラグインで未対応、JARM は Plugin 対応済みだが本 deck では構成簡素化のため無効化。詳細は[検証 2 の補足](#検証-2kong--rpの補足)）。Message Signing 仕様の signed authorization responses option を採用した完全な構成では、コールバック URL は `/protected?response=<JARM JWT>` の形になる。
 
 ##### 3. Kong からのレスポンスを確認する
 
@@ -2489,10 +2489,10 @@ curl -s \
 | sender-constrained token | ✅（mTLS、`cnf.x5t#S256`） |
 | JWT 署名アルゴリズム（PS256/ES256/EdDSA） | ✅（PS256） |
 | Message Signing：JAR | ✅（`tls_client_auth` とは別レイヤーで PS256 `client_jwk` を投入し、Keycloak 側に同じ公開 JWK を登録して Request Object 署名を検証） |
-| Message Signing：JARM | ❌（Kong プラグインの制約は検証 2 と同じ） |
+| Message Signing：JARM | ⚠️ 本 deck では未採用（Plugin は対応済。検証 2 と同様、`response_mode: jwt` を有効化していない） |
 | Message Signing：Signed Introspection Responses | – PoC アーキテクチャの対象外（Kong は token endpoint から直接トークンを受領するため introspection 経路を持たない） |
 
-検証 3 で **Security Profile の必須要件に加えて、Message Signing の signed authorization requests（JAR）option まで実装できている** ことになる。残る JARM は Kong RP 側の plugin 制約により現バージョンでは到達不可。Signed Introspection Responses は認可コードフローとは別レイヤーの機能で、本 PoC のアーキテクチャ対象外。
+検証 3 で **Security Profile の必須要件に加えて、Message Signing の signed authorization requests（JAR）option まで実装できている** ことになる。JARM は Plugin として対応しているが本 deck では `response_mode: jwt` を有効化していない（最小再現は `~/work/FAPI/JARM/`）。Signed Introspection Responses は認可コードフローとは別レイヤーの機能で、本 PoC のアーキテクチャ対象外。
 
 ---
 
@@ -2583,7 +2583,7 @@ alice・bob は `fapi2-users` Consumer Group に属しており、charlie はグ
 
 ### Kong Gateway（deck/rp.yaml）
 
-検証 2 で Kong を FAPI 2.0 RP として動作させるための設定。`deck/rs.yaml` との大きな違いは、**Kong がトークンを検証する側ではなく、トークンを取得しに行く側** になる点である。よって `auth_methods` が `authorization_code` + `session` になり、PAR/JAR/private_key_jwt が「Kong 自身が発行・送出する」役割で設定される（JARM・DPoP は Kong プラグインの制約により採用していない、詳細は [検証 2（Kong = RP）の補足](#検証-2kong--rpの補足)）。
+検証 2 で Kong を FAPI 2.0 RP として動作させるための設定。`deck/rs.yaml` との大きな違いは、**Kong がトークンを検証する側ではなく、トークンを取得しに行く側** になる点である。よって `auth_methods` が `authorization_code` + `session` になり、PAR/JAR/private_key_jwt が「Kong 自身が発行・送出する」役割で設定される（DPoP の RP 側生成は Kong プラグインで未対応のため不採用、JARM は Plugin 対応済みだが本 PoC では構成簡素化のため不採用。詳細は [検証 2（Kong = RP）の補足](#検証-2kong--rpの補足)）。
 
 #### auth_methods と redirect_uri
 
@@ -2634,7 +2634,7 @@ require_signed_request_object: true
 
 これで Security Profile の **PAR + PKCE + private_key_jwt** と Message Signing の **signed authorization requests option（JAR）** をカバーする。
 
-`response_mode: query.jwt`（JARM）と `proof_of_possession_dpop: strict`（DPoP）は本検証では設定していない。理由は「[検証 2（Kong = RP）の補足](#検証-2kong--rpの補足)」を参照。
+`response_mode: jwt`（JARM）と `proof_of_possession_dpop: strict`（DPoP）は本検証では設定していない。JARM は Plugin 対応済みだが PoC の簡素化のため、DPoP は RP 側生成が Kong プラグインで未対応のため。詳細は「[検証 2（Kong = RP）の補足](#検証-2kong--rpの補足)」を参照。
 
 #### 内部 URL と公開 URL の混在
 
@@ -3011,9 +3011,74 @@ Kong `openid-connect` プラグインは **DPoP の検証（RS 用途）はサ�
 
 このため検証 2 では Keycloak 側の DPoP 要件を外している。**FAPI 2.0 で必須の sender-constrained token は別パス（mTLS、＝検証 3）で実現する** という設計判断につながった。
 
-#### JARM（`response_mode: query.jwt`）も Kong RP では未到達
+#### JARM（`response_mode: jwt`）と Kong 初回 discovery 時の JWKS 整合性
 
-`deck/rp.yaml` で `response_mode: query.jwt` を指定すると、Kong がコールバック時の JARM JWT を認識せず認可フローを最初からやり直す挙動となった。検証 2 では plain `code` 受信としている。Keycloak 側の JARM サポートそのものは確認できているので、これは Kong プラグイン側の制約。
+当初は「Kong RP では JARM 受信側が未実装」と整理していたが、これは誤り。**Kong `openid-connect` プラグインは JARM の受信側にも対応しており**、`?response=<JWT>` をヘッダーから取り出し alg/kid で JWKS を引いて検証する経路まで実装されている。失敗していたのは plugin の機能不足ではなく、**Keycloak 側のレイジー鍵生成と Kong 側の issuer cache スナップショットがズレることで「初回 discovery 時に PS256 鍵が JWKS に含まれなかった」**ためだった。
+
+##### 現象
+
+Kong のエラーログに次が出る:
+
+```text
+[openid-connect] suitable jwk was not found (PS256/<kid>)
+[openid-connect] invalid authorization code flow
+[openid-connect] creating authorization code flow request with previous parameters
+```
+
+`<kid>` は JARM JWT のヘッダーに入っている Keycloak realm 鍵の kid。Kong は JWT のヘッダーから alg/kid を抽出するところまで動いているが、issuer cache に持っている JWKS スナップショットにその kid が無いので照合に失敗し、認証されていないリクエストとして認可フローを再起動してしまう。
+
+##### 原因（2 段構え）
+
+**(1) Keycloak のレイジー PS256 鍵生成**
+
+Keycloak は realm import 時点では `rsa-generated`（RS256）と `rsa-enc-generated`（RSA-OAEP）の **2 鍵だけ** を持ち、PS256 用の realm key は **JARM レスポンスを署名する瞬間に初めて生成して JWKS に追加する**。
+
+**(2) Kong issuer cache のスナップショット**
+
+`openid-connect` プラグインは traditional / Postgres モードでは `/openid-connect/issuers` 配下に discovery + JWKS を **永続スナップショット** として保持する。検証で kid miss が起きても `rediscovery_interval`（既定値 ~30 秒）の throttle が効いて自動再取得が遅れる。`docker compose restart kong` でもこの永続 cache は消えない。
+
+つまり、**Kong が初回 discovery を行う前に Keycloak が PS256 鍵を持っているかどうかが、JARM の成否を決める**。
+
+##### タイミング比較（実機計測）
+
+`~/work/FAPI/JARM/` で `docker compose down -v` から再現:
+
+| 時点 | 操作 | Keycloak JWKS | Kong cache | フロー結果 |
+| --- | --- | --- | --- | --- |
+| T0 | `compose up` 完了直後 | 2 鍵（RS256, RSA-OAEP） | 空 | — |
+| T1 | `/protected` 初アクセス → Kong が discovery | 2 鍵 | **2 鍵スナップショット** | 302 (PAR OK) |
+| T2 | JARM フロー実行 | **3 鍵（PS256 追加）** | **2 鍵のまま** ← 不整合 | callback で再 PAR (失敗) |
+| T3 | `DELETE /openid-connect/issuers` | 3 鍵 | 空 | — |
+| T4 | JARM フロー再実行 | 3 鍵 | **3 鍵に更新** | 200 成功 |
+
+T2 で Keycloak は PS256 鍵を作って JWKS に出しているのに、Kong cache は T1 で固めた 2 鍵スナップショットのまま — これが `suitable jwk was not found` の正体。
+
+##### 復旧手順
+
+```bash
+# 1. issuer cache の中身を確認
+curl -s localhost:8001/openid-connect/issuers \
+  | jq '.data[].keys[] | {kid, alg, use}'
+
+# 2. JARM 署名用 kid が無ければ cache を破棄
+curl -X DELETE localhost:8001/openid-connect/issuers
+
+# 3. JARM フローを再実行 → 200 で完結することを確認
+```
+
+##### 検証時の落とし穴
+
+「JARM フローを通すまで PS256 鍵が存在しない」という Keycloak 側の時間差と、「最初の discovery で JWKS を snapshot して固める」という Kong 側のキャッシュ設計が両方とも効いて初めて発生する。**最初に Kong に当てたリクエストが JARM フローだったか否か** で成否が変わる、というのが再現性を不安定に見せる正体。デバッグ中に意図せず非 JARM ルートを叩いて discovery を済ませてしまうと、その後の JARM 試行はすべて失敗する。
+
+回避策のオプション:
+
+- JARM フロー実行前に PS256 鍵を強制生成する Keycloak ウォームアップ（admin API or 起動スクリプトで `POST .../keys/components`）
+- Kong の初回 discovery を JARM フローで走らせる
+- 検証スクリプトに「初回失敗時は `DELETE /openid-connect/issuers` → 再試行」を組み込む
+
+##### 検証 2 での扱い
+
+本リポジトリの [`deck/rp.yaml`](deck/rp.yaml) では PoC の簡素化のため `response_mode: jwt` を有効化していない（plain `code` 受信としている）。これは Kong の機能不足ではなく構成判断であり、JARM 込みの最小再現は別ディレクトリ `~/work/FAPI/JARM/` に切り出してある。
 
 #### `proof_of_possession_auth_methods_validation: false` が必要なケース
 
