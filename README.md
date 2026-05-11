@@ -3013,7 +3013,7 @@ Kong `openid-connect` プラグインは **DPoP の検証（RS 用途）はサ�
 
 #### JARM（`response_mode: jwt`）と Kong 初回 discovery 時の JWKS 整合性
 
-当初は「Kong RP では JARM 受信側が未実装」と整理していたが、これは誤り。**Kong `openid-connect` プラグインは JARM の受信側にも対応しており**、`?response=<JWT>` をヘッダーから取り出し alg/kid で JWKS を引いて検証する経路まで実装されている。失敗していたのは plugin の機能不足ではなく、**Keycloak 側のレイジー鍵生成と Kong 側の issuer cache スナップショットがズレることで「初回 discovery 時に PS256 鍵が JWKS に含まれなかった」**ためだった。
+当初は「Kong RP では JARM 受信側が未実装」と整理していたが、これは誤り。**Kong `openid-connect` プラグインは JARM の受信側にも対応しており**、`?response=<JWT>` をヘッダーから取り出し alg/kid で JWKS を引いて検証する経路まで実装されている。失敗していたのは plugin の機能不足ではなく、**Keycloak 側のレイジー鍵生成と Kong 側の issuer cache スナップショットがズレることで、初回 discovery 時に PS256 鍵が JWKS に含まれなかった** ためだった。
 
 ##### 現象
 
@@ -3038,6 +3038,51 @@ Keycloak は realm import 時点では `rsa-generated`（RS256）と `rsa-enc-ge
 `openid-connect` プラグインは traditional / Postgres モードでは `/openid-connect/issuers` 配下に discovery + JWKS を **永続スナップショット** として保持する。検証で kid miss が起きても `rediscovery_interval`（既定値 ~30 秒）の throttle が効いて自動再取得が遅れる。`docker compose restart kong` でもこの永続 cache は消えない。
 
 つまり、**Kong が初回 discovery を行う前に Keycloak が PS256 鍵を持っているかどうかが、JARM の成否を決める**。
+
+##### 失敗から復旧までの時系列
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as ユーザー<br>（jarm_repro.py）
+    participant K as Kong<br>openid-connect
+    participant DB as Kong issuer cache<br>（Postgres 永続）
+    participant KC as Keycloak
+
+    note over KC: 【T0】realm import 完了<br>JWKS = RS256 + RSA-OAEP（2 鍵）<br>※PS256 鍵は未生成
+
+    U->>K: GET /protected（初回・非 JARM）
+    K->>KC: discovery + JWKS 取得
+    KC-->>K: JWKS（2 鍵）
+    K->>DB: snapshot 保存（2 鍵）
+    note over K,DB: 【T1】cache に 2 鍵スナップショットが固定
+    K-->>U: 302 to Keycloak（PAR OK）
+
+    U->>KC: ログイン + 認証
+    note over KC: JARM 応答を PS256 で署名<br>★この瞬間 PS256 realm key を生成★<br>JWKS = 3 鍵に増加
+    KC-->>U: 302 ?response=＜JWT signed PS256＞
+
+    U->>K: GET /protected?response=＜JWT＞
+    K->>DB: keys を取得
+    DB-->>K: 2 鍵（古いスナップショット）
+    note over K: PS256/＜kidA＞ を探す → miss<br>rediscovery_interval 内 → 再取得 skip
+    K-->>U: 認可コードフロー再起動<br>（suitable jwk was not found）
+    note over U,KC: 【T2】失敗 — Keycloak は 3 鍵 / Kong cache は 2 鍵
+
+    U->>K: DELETE /openid-connect/issuers
+    K->>DB: cache 削除
+    note over K,DB: 【T3】cache 空
+
+    U->>K: JARM フロー再実行
+    K->>KC: 再 discovery
+    KC-->>K: JWKS（3 鍵、PS256 含む）
+    K->>DB: snapshot 保存（3 鍵）
+    note over K: PS256/＜kidA＞ hit
+    K-->>U: 200 成功
+    note over K,DB: 【T4】cache に PS256 を含む 3 鍵
+```
+
+矢印の上にある番号と下のタイミング比較表の T0〜T4 が対応している。図の中で **★PS256 realm key を生成★** とマークしている瞬間が、Keycloak 側 JWKS が 2 鍵から 3 鍵に切り替わるタイミングで、Kong の cache はこの増分を取り込めない（既に 2 鍵スナップショットを保持しているため）。
 
 ##### タイミング比較（実機計測）
 
